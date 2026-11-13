@@ -47,11 +47,11 @@ export interface SampleAccount {
 }
 
 export const sampleUserProfile = {
-  name: "Karthik Varma",
-  nameTe: "కార్తీక్ వర్మ",
-  email: "karthik.varma@example.com",
-  role: "Personal Pro",
-  roleTe: "వ్యక్తిగత ప్రో",
+  name: "Suneel Garnepudi",
+  nameTe: "సునీల్ గార్నెపూడి",
+  email: "garnepudisuneel@gmail.com",
+  role: "Finance Admin",
+  roleTe: "ఫైనాన్స్ అడ్మిన్",
   currency: "INR",
   currencySymbol: "₹",
   avatarUrl: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
