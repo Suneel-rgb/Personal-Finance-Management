@@ -40,21 +40,61 @@ export async function PUT(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { dueDate, notes, status } = body;
+    const { title, partyName, frequency, originalAmount, dueDate, notes, status, paymentMethod } = body;
 
-    const debt = await prisma.debt.findUnique({ where: { id } });
+    const debt = await prisma.debt.findUnique({
+      where: { id },
+      include: { party: true, settlements: true },
+    });
     if (!debt) {
       return NextResponse.json({ error: "Debt not found" }, { status: 404 });
+    }
+
+    let partyId = debt.partyId;
+    if (partyName && partyName.trim() && partyName !== debt.party?.name) {
+      const newParty = await prisma.party.create({
+        data: {
+          userId: debt.userId,
+          name: partyName.trim(),
+        },
+      });
+      partyId = newParty.id;
+    }
+
+    let newOriginal = debt.originalAmount;
+    let newRemaining = debt.remainingAmount;
+    if (originalAmount !== undefined) {
+      const num = parseFloat(originalAmount);
+      if (!isNaN(num) && num > 0) {
+        newOriginal = num;
+        // Total already paid from settlements
+        const totalPaidSoFar = debt.settlements.reduce((sum, s) => sum + s.amountPaid, 0);
+        newRemaining = Math.max(0, newOriginal - totalPaidSoFar);
+      }
+    }
+
+    let newStatus = status !== undefined ? status : debt.status;
+    if (newRemaining === 0 && debt.settlements.length > 0) {
+      newStatus = "SETTLED";
+    } else if (newRemaining < newOriginal) {
+      newStatus = "PARTIALLY_PAID";
     }
 
     const updated = await prisma.debt.update({
       where: { id },
       data: {
+        title: title !== undefined ? title : debt.title,
+        partyId,
+        frequency: frequency !== undefined ? frequency : debt.frequency,
+        originalAmount: newOriginal,
+        remainingAmount: newRemaining,
+        paidAmount: Math.max(0, newOriginal - newRemaining),
+        paymentMethod: paymentMethod !== undefined ? paymentMethod : debt.paymentMethod,
         dueDate: dueDate !== undefined ? (dueDate ? new Date(dueDate) : null) : debt.dueDate,
         notes: notes !== undefined ? notes : debt.notes,
-        status: status !== undefined ? status : debt.status,
+        status: newStatus,
       },
-      include: { party: true },
+      include: { party: true, settlements: true },
     });
 
     return NextResponse.json(updated);

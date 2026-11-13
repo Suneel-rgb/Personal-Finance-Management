@@ -2,13 +2,16 @@ import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import path from "path";
 
-// Resolve DATABASE_URL from Vercel Postgres variables if DATABASE_URL is not directly set
+// Resolve DATABASE_URL from Postgres variables if DATABASE_URL is not directly set
 if (!process.env.DATABASE_URL) {
-  if (process.env.POSTGRES_PRISMA_URL) {
-    process.env.DATABASE_URL = process.env.POSTGRES_PRISMA_URL;
-  } else if (process.env.POSTGRES_URL) {
-    process.env.DATABASE_URL = process.env.POSTGRES_URL;
-  }
+  process.env.DATABASE_URL =
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    process.env.DATABASE_PRISMA_URL ||
+    process.env.NEON_DATABASE_URL ||
+    process.env.SUPABASE_DATABASE_URL ||
+    "";
 }
 
 // Normalize postgres:// to postgresql://

@@ -88,12 +88,18 @@ model Debt {
   user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   partyId         String
   party           Party            @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  title           String?          // e.g. "Office Rent", "Worker Wages", "Supplier Mastan"
   type            String           // "LENT" (Money to receive / receivable) | "BORROWED" (Money to pay / payable)
+  frequency       String           @default("ONE_TIME") // "WEEKLY" | "MONTHLY" | "ONE_TIME"
   originalAmount  Float
   remainingAmount Float
+  paidAmount      Float            @default(0.0)
   dueDate         DateTime?
   status          String           @default("PENDING") // PENDING, PARTIALLY_PAID, SETTLED, OVERDUE
+  paymentMethod   String?          @default("UPI")
   notes           String?
+  parentDebtId    String?
+  isRecurring     Boolean          @default(false)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
@@ -102,6 +108,7 @@ model Debt {
 
   @@index([userId, status])
   @@index([partyId])
+  @@index([frequency])
 }
 
 model Transaction {
@@ -118,6 +125,8 @@ model Transaction {
   party           Party?          @relation(fields: [partyId], references: [id], onDelete: SetNull)
   debtId          String?
   debt            Debt?           @relation(fields: [debtId], references: [id], onDelete: SetNull)
+  title           String?         // Optional transaction name / title
+  referenceNumber String?         // UTR, transaction ID, or invoice number
   type            String          // INCOME, EXPENSE, TRANSFER, LEND, BORROW, SETTLEMENT
   amount          Float
   paymentMethod   String?         @default("UPI") // CASH, UPI, BANK_TRANSFER, DEBIT_CARD, CREDIT_CARD, CHEQUE
@@ -135,15 +144,17 @@ model Transaction {
 }
 
 model DebtSettlement {
-  id            String      @id @default(uuid())
-  debtId        String
-  debt          Debt        @relation(fields: [debtId], references: [id], onDelete: Cascade)
-  transactionId String      @unique
-  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  amountPaid    Float
-  paymentDate   DateTime
-  notes         String?
-  createdAt     DateTime    @default(now())
+  id              String      @id @default(uuid())
+  debtId          String
+  debt            Debt        @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  transactionId   String      @unique
+  transaction     Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  amountPaid      Float
+  paymentDate     DateTime
+  paymentMethod   String?     @default("UPI")
+  referenceNumber String?
+  notes           String?
+  createdAt       DateTime    @default(now())
 
   @@index([debtId])
 }

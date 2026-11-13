@@ -48,6 +48,16 @@ export async function GET() {
       .filter((d) => d.type === "BORROWED" && d.status !== "SETTLED")
       .reduce((sum, d) => sum + d.remainingAmount, 0);
 
+    const weeklyPayables = debts.filter(
+      (d) => d.type === "BORROWED" && d.status !== "SETTLED" && d.frequency === "WEEKLY"
+    );
+    const totalWeeklyPayments = weeklyPayables.reduce((sum, d) => sum + d.remainingAmount, 0);
+
+    const monthlyPayables = debts.filter(
+      (d) => d.type === "BORROWED" && d.status !== "SETTLED" && d.frequency === "MONTHLY"
+    );
+    const totalMonthlyPayments = monthlyPayables.reduce((sum, d) => sum + d.remainingAmount, 0);
+
     // Net worth = Liquid Balance + Pending Receivables - Pending Payables - Credit Card Outstanding
     const netWorth = liquidBalance + pendingReceivables - pendingPayables - creditCardOutstanding;
 
@@ -352,6 +362,14 @@ export async function GET() {
 
     return NextResponse.json({
       summary: {
+        todayExpenses: dailySummary.expenses,
+        todayReceived: dailySummary.received + dailySummary.income,
+        totalPendingPayments: pendingPayables,
+        weeklyPayments: totalWeeklyPayments,
+        monthlyPayments: totalMonthlyPayments,
+        totalPaidAmount: totalPaidMoney,
+        totalReceivedAmount: totalReceivedMoney + totalIncomeAllTime,
+        currentAvailableBalance: liquidBalance,
         netWorth,
         availableBalance: liquidBalance,
         totalIncome: monthlySummary.income,
@@ -365,6 +383,32 @@ export async function GET() {
         monthlySavings,
         monthlySavingsRate,
         creditCardOutstanding,
+      },
+      financialOverview: {
+        dailyExpenses: {
+          today: dailySummary.expenses,
+          thisWeek: weeklySummary.expenses,
+          thisMonth: monthlySummary.expenses,
+        },
+        weeklyPaymentSummary: {
+          total: totalWeeklyPayments,
+          count: weeklyPayables.length,
+          items: weeklyPayables.slice(0, 5),
+        },
+        monthlyPaymentSummary: {
+          total: totalMonthlyPayments,
+          count: monthlyPayables.length,
+          items: monthlyPayables.slice(0, 5),
+        },
+        businessReceivedSummary: {
+          today: dailySummary.received + dailySummary.income,
+          thisMonth: monthlySummary.received + monthlySummary.income,
+          total: totalReceivedMoney + totalIncomeAllTime,
+        },
+        pendingVsPaid: {
+          pending: pendingPayables,
+          paid: totalPaidMoney,
+        },
       },
       summaries: {
         daily: dailySummary,

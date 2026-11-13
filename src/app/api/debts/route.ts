@@ -2,15 +2,23 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ensureInitialData } from "@/lib/initDb";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await ensureInitialData();
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const frequency = searchParams.get("frequency");
+
+    const whereClause: any = { userId: user.id };
+    if (frequency) {
+      whereClause.frequency = frequency;
+    }
+
     const debts = await prisma.debt.findMany({
-      where: { userId: user.id },
+      where: whereClause,
       include: {
         party: true,
         settlements: {
@@ -25,14 +33,15 @@ export async function GET() {
       orderBy: [{ status: "asc" }, { dueDate: "asc" }],
     });
 
-    // Check overdue statuses dynamically
+    // Check overdue statuses dynamically and calculate paid amount
     const now = new Date();
     const updatedDebts = debts.map((d) => {
       let currentStatus = d.status;
       if (d.status !== "SETTLED" && d.dueDate && new Date(d.dueDate) < now) {
         currentStatus = "OVERDUE";
       }
-      return { ...d, status: currentStatus };
+      const paid = Math.max(0, d.originalAmount - d.remainingAmount);
+      return { ...d, paidAmount: paid, status: currentStatus };
     });
 
     const receivables = updatedDebts.filter((d) => d.type === "LENT");
@@ -72,12 +81,16 @@ export async function POST(request: Request) {
 
     const body = await request.json();
     const {
+      title,
+      paymentName,
       partyId,
       partyName,
       type, // "LENT" (to receive) or "BORROWED" (to pay)
       amount,
+      frequency, // "WEEKLY" | "MONTHLY" | "ONE_TIME"
       dueDate,
       notes,
+      paymentMethod,
       accountId, // optional: if provided, immediately updates account balance
     } = body;
 
@@ -85,6 +98,8 @@ export async function POST(request: Request) {
     if (isNaN(numAmount) || numAmount <= 0) {
       return NextResponse.json({ error: "Please enter a valid amount" }, { status: 400 });
     }
+
+    const resolvedTitle = title || paymentName || (partyName ? `Payment for ${partyName}` : "Pending Payment");
 
     const result = await prisma.$transaction(async (tx) => {
       let finalPartyId = partyId;
@@ -109,9 +124,13 @@ export async function POST(request: Request) {
         data: {
           userId: user.id,
           partyId: finalPartyId,
-          type,
+          title: resolvedTitle,
+          type: type || "BORROWED",
+          frequency: frequency || "ONE_TIME",
           originalAmount: numAmount,
           remainingAmount: numAmount,
+          paidAmount: 0,
+          paymentMethod: paymentMethod || "UPI",
           dueDate: dueDate ? new Date(dueDate) : null,
           status: "PENDING",
           notes: notes || null,

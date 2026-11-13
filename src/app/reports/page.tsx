@@ -8,7 +8,6 @@ import {
   TrendingUp,
   TrendingDown,
   Layers,
-  Percent,
   Download,
   Calendar,
   FileSpreadsheet,
@@ -17,12 +16,9 @@ import {
   Filter,
   Search,
   HandCoins,
-  Target,
-  ArrowUpRight,
-  ArrowDownRight,
   Clock,
   CheckCircle2,
-  AlertTriangle,
+  Banknote,
   RotateCcw,
 } from "lucide-react";
 import {
@@ -36,22 +32,22 @@ import {
   Pie,
   Cell,
   Legend,
-  AreaChart,
-  Area,
   CartesianGrid,
 } from "recharts";
 import * as XLSX from "xlsx";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 
 type ReportType =
-  | "daily"
-  | "weekly"
-  | "monthly"
-  | "yearly"
-  | "income"
-  | "expense"
-  | "pending_payment"
-  | "received_payment"
-  | "savings";
+  | "daily_expenses"
+  | "weekly_expenses"
+  | "monthly_expenses"
+  | "business_received"
+  | "weekly_payments"
+  | "monthly_payments"
+  | "pending_payments"
+  | "paid_history";
 
 export default function ReportsPage() {
   const { t, language, formatCurrency, formatDate } = useLanguage();
@@ -59,26 +55,14 @@ export default function ReportsPage() {
   const isDark = theme === "dark";
 
   // Filter & Report States
-  const [reportType, setReportType] = useState<ReportType>("monthly");
+  const [reportType, setReportType] = useState<ReportType>("daily_expenses");
   const [datePreset, setDatePreset] = useState("all");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [categoryId, setCategoryId] = useState("all");
   const [tableSearch, setTableSearch] = useState("");
 
-  const [categories, setCategories] = useState<any[]>([]);
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-
-  // Load categories
-  useEffect(() => {
-    fetch("/api/categories")
-      .then((r) => r.json())
-      .then((cats) => {
-        if (Array.isArray(cats)) setCategories(cats);
-      })
-      .catch((err) => console.error(err));
-  }, []);
 
   // Fetch report data
   const fetchReports = () => {
@@ -88,7 +72,6 @@ export default function ReportsPage() {
 
     if (startDate) params.append("startDate", startDate);
     if (endDate) params.append("endDate", endDate);
-    if (categoryId !== "all") params.append("categoryId", categoryId);
 
     fetch(`/api/reports?${params.toString()}`)
       .then((r) => r.json())
@@ -105,7 +88,7 @@ export default function ReportsPage() {
     const handleDataChange = () => fetchReports();
     window.addEventListener("finance_data_changed", handleDataChange);
     return () => window.removeEventListener("finance_data_changed", handleDataChange);
-  }, [reportType, startDate, endDate, categoryId]);
+  }, [reportType, startDate, endDate]);
 
   // Handle Date Presets
   const handleSelectPreset = (preset: string) => {
@@ -115,6 +98,16 @@ export default function ReportsPage() {
     if (preset === "all") {
       setStartDate("");
       setEndDate("");
+    } else if (preset === "today") {
+      const todayStr = now.toISOString().split("T")[0];
+      setStartDate(todayStr);
+      setEndDate(todayStr);
+    } else if (preset === "this_week") {
+      const day = now.getDay();
+      const start = new Date(now);
+      start.setDate(now.getDate() - day);
+      setStartDate(start.toISOString().split("T")[0]);
+      setEndDate(now.toISOString().split("T")[0]);
     } else if (preset === "this_month") {
       const start = new Date(now.getFullYear(), now.getMonth(), 1);
       const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -125,11 +118,6 @@ export default function ReportsPage() {
       const end = new Date(now.getFullYear(), now.getMonth(), 0);
       setStartDate(start.toISOString().split("T")[0]);
       setEndDate(end.toISOString().split("T")[0]);
-    } else if (preset === "last_30_days") {
-      const start = new Date(now);
-      start.setDate(now.getDate() - 30);
-      setStartDate(start.toISOString().split("T")[0]);
-      setEndDate(now.toISOString().split("T")[0]);
     } else if (preset === "this_year") {
       const start = new Date(now.getFullYear(), 0, 1);
       const end = new Date(now.getFullYear(), 11, 31);
@@ -142,118 +130,185 @@ export default function ReportsPage() {
     setDatePreset("all");
     setStartDate("");
     setEndDate("");
-    setCategoryId("all");
     setTableSearch("");
   };
 
-  // Language-aware Excel Export
-  const exportReportExcel = () => {
-    if (!data) return;
+  // 8 Specific Report Configurations
+  const reportTabs: Array<{ id: ReportType; labelEn: string; labelTe: string; icon: any }> = [
+    { id: "daily_expenses", labelEn: "Daily Expenses Report", labelTe: "రోజువారీ ఖర్చుల నివేదిక", icon: TrendingDown },
+    { id: "weekly_expenses", labelEn: "Weekly Expenses Report", labelTe: "వారపు ఖర్చుల నివేదిక", icon: Calendar },
+    { id: "monthly_expenses", labelEn: "Monthly Expenses Report", labelTe: "నెలవారీ ఖర్చుల నివేదిక", icon: BarChart3 },
+    { id: "business_received", labelEn: "Business Received Money Report", labelTe: "వ్యాపార రాబడి నివేదిక", icon: Banknote },
+    { id: "weekly_payments", labelEn: "Weekly Payments Report", labelTe: "వారపు చెల్లింపుల నివేదిక", icon: Clock },
+    { id: "monthly_payments", labelEn: "Monthly Payments Report", labelTe: "నెలవారీ చెల్లింపుల నివేదిక", icon: Layers },
+    { id: "pending_payments", labelEn: "Pending Payments Report", labelTe: "పెండింగ్ చెల్లింపుల నివేదిక", icon: Clock },
+    { id: "paid_history", labelEn: "Paid History Report", labelTe: "చెల్లించిన చరిత్ర నివేదిక", icon: CheckCircle2 },
+  ];
+
+  // Prepare Rows for Current Selected Report
+  const currentReportRows = useMemo(() => {
+    if (!data) return [];
     const isTe = language === "te";
 
-    let rows: any[] = [];
-    let sheetName = "Report";
-
-    if (reportType === "daily" || reportType === "weekly" || reportType === "monthly" || reportType === "yearly") {
-      sheetName = isTe ? "నగదు_ప్రవాహం" : "Cash_Flow";
-      rows = (data.timeSeriesData || []).map((item: any) => ({
-        [isTe ? "కాలవ్యవధి (Interval)" : "Interval"]: isTe && item.labelTe ? item.labelTe : item.label,
-        [isTe ? "రాబడి (Income ₹)" : "Income (₹)"]: item.income,
-        [isTe ? "ఖర్చులు (Expense ₹)" : "Expense (₹)"]: item.expense,
-        [isTe ? "నికర పొదుపు (Net Savings ₹)" : "Net Savings (₹)"]: item.net,
-        [isTe ? "పొదుపు శాతం (Savings Rate)" : "Savings Rate"]: item.income > 0 ? `${Math.round((item.net / item.income) * 100)}%` : "0%",
-      }));
-    } else if (reportType === "income") {
-      sheetName = isTe ? "రాబడి_నివేదిక" : "Income_Report";
-      rows = (data.transactions || []).filter((t: any) => t.type === "INCOME").map((t: any) => ({
-        [isTe ? "తేదీ (Date)" : "Date"]: formatDate(t.transactionDate),
-        [isTe ? "వర్గం (Category)" : "Category"]: isTe ? t.category?.nameTe : t.category?.nameEn,
-        [isTe ? "ఖాతా (Account)" : "Account"]: t.account?.name || "",
-        [isTe ? "చెల్లింపు విధానం (Payment Method)" : "Payment Method"]: t.paymentMethod || "UPI",
-        [isTe ? "వివరాలు (Notes)" : "Notes"]: t.notes || "",
-        [isTe ? "మొత్తం (Amount ₹)" : "Amount (₹)"]: t.amount,
-      }));
-    } else if (reportType === "expense") {
-      sheetName = isTe ? "ఖర్చుల_నివేదిక" : "Expense_Report";
-      rows = (data.transactions || []).filter((t: any) => t.type === "EXPENSE").map((t: any) => ({
-        [isTe ? "తేదీ (Date)" : "Date"]: formatDate(t.transactionDate),
-        [isTe ? "వర్గం (Category)" : "Category"]: isTe ? t.category?.nameTe : t.category?.nameEn,
-        [isTe ? "ఖాతా (Account)" : "Account"]: t.account?.name || "",
-        [isTe ? "చెల్లింపు విధానం (Payment Method)" : "Payment Method"]: t.paymentMethod || "UPI",
-        [isTe ? "వివరాలు (Notes)" : "Notes"]: t.notes || "",
-        [isTe ? "మొత్తం (Amount ₹)" : "Amount (₹)"]: t.amount,
-      }));
-    } else if (reportType === "pending_payment") {
-      sheetName = isTe ? "చెల్లించాల్సిన_బాకీలు" : "Pending_Payables";
-      rows = (data.pendingPayables || []).map((d: any) => ({
-        [isTe ? "వ్యక్తి / సంస్థ (Creditor)" : "Person/Party"]: d.party?.name || "",
-        [isTe ? "అసలు మొత్తం (Original ₹)" : "Original Amount (₹)"]: d.originalAmount,
-        [isTe ? "మిగిలిన బాకీ (Remaining ₹)" : "Remaining Due (₹)"]: d.remainingAmount,
-        [isTe ? "గడువు తేదీ (Due Date)" : "Due Date"]: d.dueDate ? formatDate(d.dueDate) : "N/A",
-        [isTe ? "స్థితి (Status)" : "Status"]: d.status,
-        [isTe ? "వివరాలు (Notes)" : "Notes"]: d.notes || "",
-      }));
-    } else if (reportType === "received_payment") {
-      sheetName = isTe ? "స్వీకరించిన_నిధులు" : "Received_Collections";
-      rows = (data.pendingReceivables || []).map((d: any) => ({
-        [isTe ? "వ్యక్తి / సంప్రదింపు (Debtor)" : "Person/Party"]: d.party?.name || "",
-        [isTe ? "అసలు మొత్తం (Original ₹)" : "Original Amount (₹)"]: d.originalAmount,
-        [isTe ? "మిగిలిన రావలసినది (Remaining ₹)" : "Remaining Due (₹)"]: d.remainingAmount,
-        [isTe ? "గడువు తేదీ (Due Date)" : "Due Date"]: d.dueDate ? formatDate(d.dueDate) : "N/A",
-        [isTe ? "స్థితి (Status)" : "Status"]: d.status,
-      }));
-    } else if (reportType === "savings") {
-      sheetName = isTe ? "పొదుపు_లక్ష్యాలు" : "Savings_Goals";
-      rows = (data.savingsGoals || []).map((g: any) => ({
-        [isTe ? "లక్ష్యం పేరు (Goal Name)" : "Goal Name"]: isTe ? g.nameTe : g.nameEn,
-        [isTe ? "లక్ష్య మొత్తం (Target ₹)" : "Target Amount (₹)"]: g.targetAmount,
-        [isTe ? "ఇప్పటివరకు పొదుపు (Saved ₹)" : "Accumulated (₹)"]: g.currentAmount,
-        [isTe ? "పూర్తయిన శాతం (Progress)" : "Progress"]: `${Math.round((g.currentAmount / g.targetAmount) * 100)}%`,
-        [isTe ? "లక్ష్య తేదీ (Target Date)" : "Target Date"]: g.targetDate ? formatDate(g.targetDate) : "N/A",
+    if (reportType === "daily_expenses" || reportType === "weekly_expenses" || reportType === "monthly_expenses") {
+      const txs = (data.transactions || []).filter((t: any) => t.type === "EXPENSE");
+      return txs.map((t: any) => ({
+        date: formatDate(t.transactionDate),
+        rawDate: t.transactionDate,
+        title: t.notes || (isTe ? t.category?.nameTe : t.category?.nameEn) || "Expense",
+        category: isTe ? t.category?.nameTe || t.category?.nameEn : t.category?.nameEn || "General",
+        account: t.account?.name || "Cash",
+        paymentMethod: t.paymentMethod || "UPI",
+        amount: t.amount,
+        status: "PAID",
       }));
     }
 
-    if (rows.length === 0) return;
+    if (reportType === "business_received") {
+      const txs = (data.transactions || []).filter(
+        (t: any) => t.type === "INCOME" || t.type === "RECEIVABLE_COLLECTED" || t.type === "BORROW"
+      );
+      return txs.map((t: any) => ({
+        date: formatDate(t.transactionDate),
+        rawDate: t.transactionDate,
+        title: t.party?.name || t.notes || "Business Inflow",
+        category: isTe ? t.category?.nameTe || t.category?.nameEn : t.category?.nameEn || "Revenue",
+        account: t.account?.name || "Bank",
+        paymentMethod: t.paymentMethod || "UPI",
+        amount: t.amount,
+        status: "RECEIVED",
+      }));
+    }
 
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    if (reportType === "weekly_payments") {
+      const debts = (data.weeklyPayables || []).length > 0
+        ? data.weeklyPayables
+        : (data.allDebts || []).filter((d: any) => d.type === "BORROWED" && d.frequency === "WEEKLY");
+      return debts.map((d: any) => ({
+        date: d.dueDate ? formatDate(d.dueDate) : "Weekly",
+        rawDate: d.dueDate || d.createdAt,
+        title: d.title || d.party?.name || "Weekly Obligation",
+        category: "Weekly Payment",
+        account: d.paymentMethod || "UPI",
+        paymentMethod: d.paymentMethod || "UPI",
+        amount: d.originalAmount,
+        paidAmount: d.paidAmount || (d.originalAmount - d.remainingAmount),
+        remainingAmount: d.remainingAmount,
+        status: d.status,
+      }));
+    }
+
+    if (reportType === "monthly_payments") {
+      const debts = (data.monthlyPayables || []).length > 0
+        ? data.monthlyPayables
+        : (data.allDebts || []).filter((d: any) => d.type === "BORROWED" && d.frequency === "MONTHLY");
+      return debts.map((d: any) => ({
+        date: d.dueDate ? formatDate(d.dueDate) : "Monthly",
+        rawDate: d.dueDate || d.createdAt,
+        title: d.title || d.party?.name || "Monthly Recurring",
+        category: "Monthly Bill",
+        account: d.paymentMethod || "Bank",
+        paymentMethod: d.paymentMethod || "Bank",
+        amount: d.originalAmount,
+        paidAmount: d.paidAmount || (d.originalAmount - d.remainingAmount),
+        remainingAmount: d.remainingAmount,
+        status: d.status,
+      }));
+    }
+
+    if (reportType === "pending_payments") {
+      const debts = (data.pendingPayables || []).length > 0
+        ? data.pendingPayables
+        : (data.allDebts || []).filter((d: any) => d.type === "BORROWED" && d.status !== "SETTLED");
+      return debts.map((d: any) => ({
+        date: d.dueDate ? formatDate(d.dueDate) : "Pending",
+        rawDate: d.dueDate || d.createdAt,
+        title: d.title || d.party?.name || "Pending Obligation",
+        category: d.frequency || "Pending Dues",
+        account: d.paymentMethod || "UPI",
+        paymentMethod: d.paymentMethod || "UPI",
+        amount: d.originalAmount,
+        paidAmount: d.paidAmount || (d.originalAmount - d.remainingAmount),
+        remainingAmount: d.remainingAmount,
+        status: d.status,
+      }));
+    }
+
+    if (reportType === "paid_history") {
+      const settlements = data.settlements || [];
+      return settlements.map((s: any) => ({
+        date: formatDate(s.paymentDate),
+        rawDate: s.paymentDate,
+        title: s.debt?.title || s.debt?.party?.name || "Paid Obligation",
+        category: s.debt?.frequency || "Settlement",
+        account: s.transaction?.account?.name || "Default Account",
+        paymentMethod: s.paymentMethod || s.transaction?.paymentMethod || "UPI",
+        amount: s.amountPaid,
+        status: "SETTLED",
+      }));
+    }
+
+    return [];
+  }, [data, reportType, language]);
+
+  // Filtered Rows by search text
+  const filteredRows = useMemo(() => {
+    if (!tableSearch.trim()) return currentReportRows;
+    const q = tableSearch.toLowerCase();
+    return currentReportRows.filter(
+      (r: any) =>
+        (r.title && r.title.toLowerCase().includes(q)) ||
+        (r.category && r.category.toLowerCase().includes(q)) ||
+        (r.account && r.account.toLowerCase().includes(q)) ||
+        (r.status && r.status.toLowerCase().includes(q))
+    );
+  }, [currentReportRows, tableSearch]);
+
+  const reportTotalAmount = useMemo(() => {
+    return filteredRows.reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
+  }, [filteredRows]);
+
+  // Excel Export
+  const exportReportExcel = () => {
+    if (filteredRows.length === 0) return;
+    const isTe = language === "te";
+
+    const exportData = filteredRows.map((r: any) => ({
+      [isTe ? "తేదీ (Date)" : "Date"]: r.date,
+      [isTe ? "శీర్షిక / వివరణ (Title)" : "Title / Description"]: r.title,
+      [isTe ? "వర్గం (Category / Type)" : "Category / Type"]: r.category,
+      [isTe ? "ఖాతా / విధానం (Account / Method)" : "Account / Method"]: `${r.account} (${r.paymentMethod})`,
+      [isTe ? "మొత్తం (Amount ₹)" : "Amount (₹)"]: r.amount,
+      [isTe ? "స్థితి (Status)" : "Status"]: r.status,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
     XLSX.writeFile(
       workbook,
-      `${isTe ? "ఆర్థిక_నివేదిక" : "Financial_Report"}_${reportType}_${new Date().toISOString().split("T")[0]}.xlsx`
+      `${isTe ? "ఆర్థిక_నివేదిక" : "Finance_Report"}_${reportType}_${new Date().toISOString().split("T")[0]}.xlsx`
     );
   };
 
-  // Language-aware CSV Export (with UTF-8 BOM)
+  // CSV Export with UTF-8 BOM
   const exportReportCSV = () => {
-    if (!data) return;
+    if (filteredRows.length === 0) return;
     const isTe = language === "te";
 
-    let rows: any[] = [];
-    if (reportType === "daily" || reportType === "weekly" || reportType === "monthly" || reportType === "yearly") {
-      rows = (data.timeSeriesData || []).map((item: any) => ({
-        Interval: isTe && item.labelTe ? item.labelTe : item.label,
-        Income: item.income,
-        Expense: item.expense,
-        NetSavings: item.net,
-      }));
-    } else {
-      rows = (data.transactions || []).map((t: any) => ({
-        Date: formatDate(t.transactionDate),
-        Type: t.type,
-        Category: isTe ? t.category?.nameTe || t.category?.nameEn : t.category?.nameEn,
-        Account: t.account?.name || "",
-        Amount: t.amount,
-        Notes: t.notes || "",
-      }));
-    }
+    const exportData = filteredRows.map((r: any) => ({
+      Date: r.date,
+      Title: r.title,
+      Category: r.category,
+      Account: r.account,
+      Method: r.paymentMethod,
+      Amount: r.amount,
+      Status: r.status,
+    }));
 
-    if (rows.length === 0) return;
-
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
     const csvContent = XLSX.utils.sheet_to_csv(worksheet);
 
-    // Prepend UTF-8 BOM (\uFEFF) so Excel on Windows recognizes Telugu Unicode glyphs properly
     const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -265,539 +320,284 @@ export default function ReportsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handlePrint = () => {
+  const handlePrintPDF = () => {
     window.print();
   };
 
-  const reportTabs: Array<{ id: ReportType; label: string; icon: any }> = [
-    { id: "daily", label: t("reports.reportDaily"), icon: Calendar },
-    { id: "weekly", label: t("reports.reportWeekly"), icon: Calendar },
-    { id: "monthly", label: t("reports.reportMonthly"), icon: BarChart3 },
-    { id: "yearly", label: t("reports.reportYearly"), icon: Layers },
-    { id: "income", label: t("reports.reportIncome"), icon: TrendingUp },
-    { id: "expense", label: t("reports.reportExpense"), icon: TrendingDown },
-    { id: "pending_payment", label: t("reports.reportPendingPayment"), icon: Clock },
-    { id: "received_payment", label: t("reports.reportReceivedPayment"), icon: HandCoins },
-    { id: "savings", label: t("reports.reportSavings"), icon: Target },
-  ];
-
-  const summary = data?.summary || {
-    totalIncome: 0,
-    totalExpense: 0,
-    netSavings: 0,
-    savingsRate: 0,
-    totalPendingPayables: 0,
-    totalPendingReceivables: 0,
-    totalSavingsTarget: 0,
-    totalSavingsAccumulated: 0,
-  };
-
-  // Filtered transactions in table
-  const filteredTableTxs = useMemo(() => {
-    if (!data?.transactions) return [];
-    return data.transactions.filter((tx: any) => {
-      if (reportType === "income" && tx.type !== "INCOME") return false;
-      if (reportType === "expense" && tx.type !== "EXPENSE") return false;
-
-      if (tableSearch.trim()) {
-        const q = tableSearch.toLowerCase();
-        const matchesNote = tx.notes ? tx.notes.toLowerCase().includes(q) : false;
-        const matchesCatEn = tx.category?.nameEn ? tx.category.nameEn.toLowerCase().includes(q) : false;
-        const matchesCatTe = tx.category?.nameTe ? tx.category.nameTe.toLowerCase().includes(q) : false;
-        const matchesParty = tx.party?.name ? tx.party.name.toLowerCase().includes(q) : false;
-        const matchesAcc = tx.account?.name ? tx.account.name.toLowerCase().includes(q) : false;
-        return matchesNote || matchesCatEn || matchesCatTe || matchesParty || matchesAcc;
-      }
-
-      return true;
-    });
-  }, [data, reportType, tableSearch]);
-
-  const COLORS = ["#10B981", "#3B82F6", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#64748B"];
-
   return (
-    <div className="space-y-6 pb-16 print:p-0 animate-in fade-in duration-200">
-      {/* 1. Header Bar */}
+    <div className="space-y-6 pb-16 print:p-0">
+      {/* 1. Header & Global Exports */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 print:hidden">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
             <BarChart3 size={24} className="text-emerald-600 dark:text-emerald-400" />
-            <span>{t("reports.title")}</span>
+            <span>{language === "te" ? "ఆర్థిక నివేదికలు" : "Financial Reports"}</span>
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-            {t("reports.subtitle")}
+            {language === "te"
+              ? "ఖర్చులు, వ్యాపార రాబడి, వారపు/నెలవారీ చెల్లింపులు మరియు చెల్లించిన చరిత్ర సమగ్ర నివేదికలు"
+              : "Generate, filter, and export detailed financial reports with custom date ranges"}
           </p>
         </div>
 
-        {/* Export Action Buttons */}
+        {/* Export Buttons */}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 shadow-xs cursor-pointer"
+          <Button
+            onClick={handlePrintPDF}
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-1.5 text-xs font-bold"
           >
             <Printer size={14} />
-            <span>{t("reports.downloadPDF")}</span>
-          </button>
-
-          <button
+            <span>PDF</span>
+          </Button>
+          <Button
             onClick={exportReportCSV}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 shadow-xs cursor-pointer"
+            variant="outline"
+            size="sm"
+            className="flex items-center gap-1.5 text-xs font-bold"
           >
             <FileText size={14} />
-            <span>{t("reports.downloadCSV")}</span>
-          </button>
-
-          <button
+            <span>CSV</span>
+          </Button>
+          <Button
             onClick={exportReportExcel}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-emerald-300 dark:border-emerald-800/80 text-xs font-bold text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 shadow-xs cursor-pointer"
+            size="sm"
+            className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white"
           >
             <FileSpreadsheet size={14} />
-            <span>{t("reports.downloadExcel")}</span>
-          </button>
+            <span>Excel</span>
+          </Button>
         </div>
       </div>
 
-      {/* 2. All 9 Report Types Navigation Bar */}
-      <div className="bg-white dark:bg-slate-900 p-2 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex items-center gap-1.5 overflow-x-auto print:hidden">
-        {reportTabs.map((tab) => {
-          const Icon = tab.icon;
-          const isActive = reportType === tab.id;
-
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setReportType(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
-                isActive
-                  ? "bg-slate-900 text-white dark:bg-emerald-600 dark:text-white shadow-xs"
-                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-              }`}
-            >
-              <Icon size={14} className={isActive ? "text-white" : "text-slate-400"} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* 3. Filters Toolbar: Custom Date Range & Category Filter */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 print:hidden">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-          {/* Quick Date Presets */}
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
-            <span className="text-xs font-bold text-slate-400 flex items-center gap-1 mr-1">
-              <Calendar size={14} />
-              <span>{language === "te" ? "త్వరిత ఎంపిక:" : "Quick Filter:"}</span>
-            </span>
-
-            {[
-              { id: "all", label: language === "te" ? "అన్నీ (All Time)" : "All Time" },
-              { id: "this_month", label: language === "te" ? "ఈ నెల" : "This Month" },
-              { id: "last_month", label: language === "te" ? "గత నెల" : "Last Month" },
-              { id: "last_30_days", label: language === "te" ? "గత 30 రోజులు" : "Last 30 Days" },
-              { id: "this_year", label: language === "te" ? "ఈ సంవత్సరం" : "This Year" },
-            ].map((p) => (
+      {/* 2. 8 REPORT TYPE TABS */}
+      <div className="print:hidden">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none">
+          {reportTabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = reportType === tab.id;
+            return (
               <button
-                key={p.id}
-                onClick={() => handleSelectPreset(p.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-all ${
-                  datePreset === p.id
-                    ? "bg-emerald-600 text-white shadow-xs font-bold"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                key={tab.id}
+                onClick={() => setReportType(tab.id)}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  isActive
+                    ? "bg-emerald-600 text-white shadow-sm"
+                    : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
                 }`}
               >
-                {p.label}
+                <Icon size={14} />
+                <span>{language === "te" ? tab.labelTe : tab.labelEn}</span>
               </button>
-            ))}
-          </div>
-
-          {/* Reset Filters */}
-          <button
-            onClick={handleResetFilters}
-            className="self-start lg:self-auto flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-          >
-            <RotateCcw size={12} />
-            <span>{language === "te" ? "ఫిల్టర్లు రీసెట్" : "Reset Filters"}</span>
-          </button>
+            );
+          })}
         </div>
+      </div>
 
-        {/* Custom Date Pickers & Category Dropdown */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <div>
-            <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-              {language === "te" ? "ప్రారంభ తేదీ (From Date)" : "Start Date"}
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                setStartDate(e.target.value);
-                setDatePreset("custom");
-              }}
-              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-              {language === "te" ? "ముగింపు తేదీ (To Date)" : "End Date"}
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => {
-                setEndDate(e.target.value);
-                setDatePreset("custom");
-              }}
-              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold text-slate-500 dark:text-slate-400 mb-1">
-              {t("reports.filterCategory")}
-            </label>
-            <select
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-              className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-emerald-500"
-            >
-              <option value="all">{t("reports.allCategories")}</option>
-              {categories.map((cat) => (
-                <option key={cat.id} value={cat.id}>
-                  {language === "te" ? cat.nameTe : cat.nameEn} ({cat.type})
-                </option>
+      {/* 3. DATE FILTERS & SEARCH BAR */}
+      <Card className="border-slate-200 dark:border-slate-800 shadow-sm print:hidden">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* Date Presets */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {[
+                { id: "all", labelEn: "All Time", labelTe: "అన్ని సమయాలు" },
+                { id: "today", labelEn: "Today", labelTe: "నేడు" },
+                { id: "this_week", labelEn: "This Week", labelTe: "ఈ వారం" },
+                { id: "this_month", labelEn: "This Month", labelTe: "ఈ నెల" },
+                { id: "last_month", labelEn: "Last Month", labelTe: "గత నెల" },
+                { id: "this_year", labelEn: "This Year", labelTe: "ఈ సంవత్సరం" },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => handleSelectPreset(p.id)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    datePreset === p.id
+                      ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200"
+                  }`}
+                >
+                  {language === "te" ? p.labelTe : p.labelEn}
+                </button>
               ))}
-            </select>
+            </div>
+
+            {/* Reset */}
+            <button
+              onClick={handleResetFilters}
+              className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 font-semibold cursor-pointer"
+            >
+              <RotateCcw size={13} />
+              <span>{language === "te" ? "రీసెట్" : "Reset"}</span>
+            </button>
           </div>
-        </div>
+
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            {/* Custom Dates */}
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400 font-medium">{language === "te" ? "ప్రారంభ:" : "From:"}</span>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setDatePreset("custom");
+                  setStartDate(e.target.value);
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-slate-400 font-medium">{language === "te" ? "ముగింపు:" : "To:"}</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setDatePreset("custom");
+                  setEndDate(e.target.value);
+                }}
+                className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs"
+              />
+            </div>
+
+            {/* Keyword Search */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder={language === "te" ? "శోధించండి..." : "Search rows..."}
+                value={tableSearch}
+                onChange={(e) => setTableSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 4. SUMMARY KPI CARDS FOR SELECTED REPORT */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+          <CardContent className="p-4">
+            <span className="text-xs text-slate-400 font-medium block">
+              {language === "te" ? "నివేదిక మొత్తం విలువ" : "Total Report Value"}
+            </span>
+            <span className="text-2xl font-black text-slate-900 dark:text-white block mt-1">
+              {formatCurrency(reportTotalAmount)}
+            </span>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+          <CardContent className="p-4">
+            <span className="text-xs text-slate-400 font-medium block">
+              {language === "te" ? "మొత్తం రికార్డుల సంఖ్య" : "Total Record Count"}
+            </span>
+            <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 block mt-1">
+              {filteredRows.length} {language === "te" ? "నమోదులు" : "records"}
+            </span>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+          <CardContent className="p-4">
+            <span className="text-xs text-slate-400 font-medium block">
+              {language === "te" ? "సగటు లావాదేవీ మొత్తం" : "Average Value"}
+            </span>
+            <span className="text-2xl font-black text-blue-600 dark:text-blue-400 block mt-1">
+              {filteredRows.length > 0
+                ? formatCurrency(Math.round(reportTotalAmount / filteredRows.length))
+                : formatCurrency(0)}
+            </span>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* 4. High-Level Summary KPI Tiles */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-bold text-slate-400 dark:text-slate-500 block">
-            {t("reports.totalIncome")}
-          </span>
-          <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 block mt-1">
-            {formatCurrency(summary.totalIncome)}
-          </span>
-          <span className="text-[11px] text-slate-400 block mt-1">
-            {language === "te" ? "నమోదైన మొత్తం రాబడి క్రెడిట్స్" : "Total verified income credits"}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-bold text-slate-400 dark:text-slate-500 block">
-            {t("reports.totalExpense")}
-          </span>
-          <span className="text-2xl font-black text-rose-600 dark:text-rose-400 block mt-1">
-            {formatCurrency(summary.totalExpense)}
-          </span>
-          <span className="text-[11px] text-slate-400 block mt-1">
-            {language === "te" ? "నమోదైన మొత్తం ఖర్చుల డెబిట్స్" : "Total verified expense debits"}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-bold text-slate-400 dark:text-slate-500 block">
-            {t("reports.netSavings")}
-          </span>
-          <span
-            className={`text-2xl font-black block mt-1 ${
-              summary.netSavings >= 0 ? "text-teal-600 dark:text-teal-400" : "text-rose-600 dark:text-rose-400"
-            }`}
-          >
-            {formatCurrency(summary.netSavings)}
-          </span>
-          <span className="text-[11px] text-slate-400 block mt-1">
-            {language === "te" ? "రాబడి - ఖర్చుల నికర మిగులు" : "Net cash retention balance"}
-          </span>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <span className="text-xs font-bold text-slate-400 dark:text-slate-500 block">
-            {reportType === "pending_payment"
-              ? language === "te" ? "చెల్లించాల్సిన బాకీలు" : "Total Payables"
-              : reportType === "received_payment"
-              ? language === "te" ? "రావాల్సిన బాకీలు" : "Total Receivables"
-              : reportType === "savings"
-              ? language === "te" ? "పొదుపు లక్ష్య మొత్తం" : "Target Savings"
-              : t("reports.savingsRate")}
-          </span>
-          <span className="text-2xl font-black text-slate-900 dark:text-white block mt-1">
-            {reportType === "pending_payment"
-              ? formatCurrency(summary.totalPendingPayables)
-              : reportType === "received_payment"
-              ? formatCurrency(summary.totalPendingReceivables)
-              : reportType === "savings"
-              ? formatCurrency(summary.totalSavingsTarget)
-              : `${summary.savingsRate}%`}
-          </span>
-          <span className="text-[11px] text-slate-400 block mt-1">
-            {reportType === "savings"
-              ? `${formatCurrency(summary.totalSavingsAccumulated)} accumulated`
-              : language === "te"
-              ? "నికర పొదుపు శాతపు సామర్థ్యం"
-              : "Financial efficiency index"}
-          </span>
-        </div>
-      </div>
-
-      {/* 5. Interactive Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Time-Series Cash Flow Chart */}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-            <div>
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <BarChart3 size={17} className="text-emerald-600 dark:text-emerald-400" />
-                <span>
-                  {reportType === "income"
-                    ? language === "te" ? "రాబడి ధోరణి (Income Trend)" : "Income Inflow Trajectory"
-                    : reportType === "expense"
-                    ? language === "te" ? "ఖర్చుల ధోరణి (Expense Trend)" : "Expenditure Outflow Trajectory"
-                    : t("reports.incomeVsExpense")}
-                </span>
-              </h2>
-              <span className="text-xs text-slate-400">
-                {language === "te" ? "కాలక్రమంలో నమోదైన నగదు ప్రవాహం" : "Time-series comparative analysis"}
+      {/* 5. TABULAR DATA REPORT */}
+      <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+        <CardHeader className="pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <FileSpreadsheet size={16} className="text-emerald-600 dark:text-emerald-400" />
+              <span>
+                {language === "te"
+                  ? reportTabs.find((t) => t.id === reportType)?.labelTe
+                  : reportTabs.find((t) => t.id === reportType)?.labelEn}
               </span>
-            </div>
-          </div>
-
-          <div className="h-72 w-full pt-4">
-            {(!data?.timeSeriesData || data.timeSeriesData.length === 0) ? (
-              <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                {t("common.loading")}
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.timeSeriesData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDark ? "#334155" : "#F1F5F9"} />
-                  <XAxis
-                    dataKey={language === "te" ? "labelTe" : "label"}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: isDark ? "#94A3B8" : "#64748B", fontSize: 11 }}
-                  />
-                  <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: isDark ? "#94A3B8" : "#64748B", fontSize: 11 }}
-                    tickFormatter={(val) => `₹${val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val}`}
-                  />
-                  <Tooltip
-                    formatter={(val: any) => [formatCurrency(Number(val)), ""]}
-                    contentStyle={{
-                      backgroundColor: isDark ? "#0F172A" : "#FFFFFF",
-                      borderColor: isDark ? "#1E293B" : "#E2E8F0",
-                      borderRadius: "12px",
-                      fontSize: "12px",
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "8px" }} />
-                  {(reportType !== "expense") && (
-                    <Bar
-                      name={language === "te" ? "రాబడి (Income)" : "Income Inflow"}
-                      dataKey="income"
-                      fill="#10B981"
-                      radius={[6, 6, 0, 0]}
-                    />
-                  )}
-                  {(reportType !== "income") && (
-                    <Bar
-                      name={language === "te" ? "ఖర్చులు (Expenses)" : "Expense Outflow"}
-                      dataKey="expense"
-                      fill="#F43F5E"
-                      radius={[6, 6, 0, 0]}
-                    />
-                  )}
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </div>
-
-        {/* Category Breakdown Donut Chart */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-                {reportType === "income"
-                  ? language === "te" ? "రాబడి వర్గాలు" : "Income Categories"
-                  : t("reports.categoryBreakdown")}
-              </h2>
-            </div>
-
-            {/* Donut Chart */}
-            {((reportType === "income" ? data?.categoryIncomes : data?.categoryExpenses) || []).length === 0 ? (
-              <div className="py-16 text-center text-xs text-slate-400">
-                {language === "te" ? "విశ్లేషణకు సరిపడా రికార్డులు లేవు" : "No categorized records found"}
-              </div>
-            ) : (
-              <div>
-                <div className="h-44 w-full mt-2">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={reportType === "income" ? data.categoryIncomes : data.categoryExpenses}
-                        dataKey="amount"
-                        nameKey="nameEn"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={48}
-                        outerRadius={72}
-                        paddingAngle={3}
-                      >
-                        {(reportType === "income" ? data.categoryIncomes : data.categoryExpenses).map(
-                          (cat: any, idx: number) => (
-                            <Cell key={idx} fill={cat.color || COLORS[idx % COLORS.length]} />
-                          )
-                        )}
-                      </Pie>
-                      <Tooltip
-                        formatter={(val: any) => [formatCurrency(Number(val)), "Amount"]}
-                        contentStyle={{
-                          backgroundColor: isDark ? "#0F172A" : "#FFFFFF",
-                          borderColor: isDark ? "#1E293B" : "#E2E8F0",
-                          borderRadius: "12px",
-                          fontSize: "12px",
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-
-                {/* List Breakdown */}
-                <div className="mt-3 space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                  {(reportType === "income" ? data?.categoryIncomes : data?.categoryExpenses)
-                    ?.slice(0, 5)
-                    .map((cat: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cat.color }} />
-                          <span className="text-slate-700 dark:text-slate-300 font-medium">
-                            {language === "te" ? cat.nameTe : cat.nameEn}
-                          </span>
-                        </div>
-                        <span className="font-bold text-slate-900 dark:text-white">
-                          {formatCurrency(cat.amount)} ({cat.percentage}%)
-                        </span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 6. Detailed Report Records Statement Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
-        {/* Table Top Toolbar */}
-        <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900 dark:text-white">
-              {t("reports.summaryReport")}
-            </h2>
-            <span className="text-xs text-slate-400">
-              {language === "te"
-                ? `ఎంచుకున్న కాలవ్యవధిలో మొత్తం ${filteredTableTxs.length} లావాదేవీల పూర్తి జాబితా`
-                : `Complete ledger statement of ${filteredTableTxs.length} matching transactions`}
+            </CardTitle>
+            <span className="text-xs text-slate-400 font-semibold">
+              {filteredRows.length} {language === "te" ? "ఫలితాలు" : "entries"}
             </span>
           </div>
+        </CardHeader>
 
-          <div className="relative w-full sm:w-64 print:hidden">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={language === "te" ? "రికార్డులలో వెతకండి..." : "Search in statement..."}
-              value={tableSearch}
-              onChange={(e) => setTableSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
-            />
-          </div>
-        </div>
+        <CardContent className="p-0">
+          {filteredRows.length === 0 ? (
+            <div className="py-16 text-center text-xs text-slate-400">
+              {language === "te"
+                ? "ఎంచుకున్న కాలవ్యవధిలో ఎలాంటి రికార్డులు కనుగొనబడలేదు."
+                : "No matching records found for the selected timeframe."}
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">{language === "te" ? "తేదీ" : "Date"}</th>
+                    <th className="py-3 px-4">{language === "te" ? "వివరాలు / శీర్షిక" : "Title / Description"}</th>
+                    <th className="py-3 px-4">{language === "te" ? "వర్గం / రకం" : "Category / Type"}</th>
+                    <th className="py-3 px-4">{language === "te" ? "చెల్లింపు విధానం" : "Method"}</th>
+                    <th className="py-3 px-4 text-right">{language === "te" ? "మొత్తం" : "Amount"}</th>
+                    <th className="py-3 px-4 text-center">{language === "te" ? "స్థితి" : "Status"}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {filteredRows.map((row: any, idx: number) => {
+                    const isPending = row.status === "PENDING";
+                    const isPaid = row.status === "PAID" || row.status === "SETTLED" || row.status === "RECEIVED";
+                    const isPartial = row.status === "PARTIALLY_PAID";
+                    const isOverdue = row.status === "OVERDUE";
 
-        {/* Table Body */}
-        {loading ? (
-          <div className="py-16 text-center text-xs text-slate-400">
-            {t("common.loading")}
-          </div>
-        ) : filteredTableTxs.length === 0 ? (
-          <div className="py-16 text-center text-xs text-slate-400">
-            {language === "te" ? "ఈ ప్రమాణాలకు తగిన రికార్డులు ఏవీ లేవు." : "No records found matching this criteria."}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-100 dark:border-slate-800">
-                <tr>
-                  <th className="py-3 px-4">{t("transactions.colDate")}</th>
-                  <th className="py-3 px-4">{t("transactions.colType")}</th>
-                  <th className="py-3 px-4">{t("transactions.colCategory")}</th>
-                  <th className="py-3 px-4">{t("transactions.colAccount")}</th>
-                  <th className="py-3 px-4">{language === "te" ? "చెల్లింపు పద్ధతి" : "Payment Method"}</th>
-                  <th className="py-3 px-4">{t("transactions.colNote")}</th>
-                  <th className="py-3 px-4 text-right">{t("transactions.colAmount")}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filteredTableTxs.slice(0, 50).map((tx: any) => {
-                  const isInc = tx.type === "INCOME" || tx.type === "RECEIVABLE_COLLECTED" || tx.type === "BORROW";
-                  const isExp = tx.type === "EXPENSE" || tx.type === "PAYABLE_PAID" || tx.type === "LEND";
-
-                  return (
-                    <tr key={tx.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-4 whitespace-nowrap text-slate-600 dark:text-slate-300">
-                        {formatDate(tx.transactionDate)}
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span
-                          className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                            isInc
-                              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400"
-                              : isExp
-                              ? "bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-400"
-                              : "bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-400"
-                          }`}
-                        >
-                          {t(`transactions.types.${tx.type}`, tx.type)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-semibold text-slate-800 dark:text-slate-200">
-                        {language === "te" ? tx.category?.nameTe : tx.category?.nameEn || "General"}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400">
-                        {tx.account?.name || "—"}
-                      </td>
-                      <td className="py-3 px-4 text-slate-500 uppercase text-[10px] font-semibold">
-                        {tx.paymentMethod || "UPI"}
-                      </td>
-                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400 max-w-xs truncate">
-                        {tx.notes || (tx.party?.name ? `Party: ${tx.party.name}` : "—")}
-                      </td>
-                      <td
-                        className={`py-3 px-4 text-right font-black whitespace-nowrap ${
-                          isInc
-                            ? "text-emerald-600 dark:text-emerald-400"
-                            : isExp
-                            ? "text-rose-600 dark:text-rose-400"
-                            : "text-blue-600 dark:text-blue-400"
-                        }`}
-                      >
-                        {isInc ? "+" : isExp ? "-" : ""}
-                        {formatCurrency(tx.amount)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    return (
+                      <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-medium text-slate-500 whitespace-nowrap">{row.date}</td>
+                        <td className="py-3 px-4 font-bold text-slate-900 dark:text-white max-w-xs truncate">
+                          {row.title}
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 dark:text-slate-300">{row.category}</td>
+                        <td className="py-3 px-4 text-slate-500">
+                          <span className="uppercase text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800">
+                            {row.paymentMethod}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-black text-slate-900 dark:text-white whitespace-nowrap">
+                          {formatCurrency(row.amount)}
+                        </td>
+                        <td className="py-3 px-4 text-center whitespace-nowrap">
+                          <span
+                            className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              isPaid
+                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                                : isPartial
+                                ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                                : isOverdue
+                                ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                                : "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                            }`}
+                          >
+                            {row.status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

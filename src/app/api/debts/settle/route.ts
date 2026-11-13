@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const { debtId, accountId, amount, paymentDate, notes } = body;
+    const { debtId, accountId, amount, paymentDate, notes, paymentMethod, referenceNumber } = body;
 
     const numAmount = parseFloat(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
@@ -53,6 +53,7 @@ export async function POST(request: Request) {
 
       const newRemaining = Math.max(0, debt.remainingAmount - numAmount);
       const newStatus = newRemaining === 0 ? "SETTLED" : "PARTIALLY_PAID";
+      const newPaid = Math.max(0, debt.originalAmount - newRemaining);
 
       // 1. Create Transaction for Settlement
       const settlementTx = await tx.transaction.create({
@@ -61,6 +62,9 @@ export async function POST(request: Request) {
           accountId,
           partyId: debt.partyId,
           debtId: debt.id,
+          title: debt.title || (debt.type === "BORROWED" ? `Payment to ${debt.party.name}` : `Collected from ${debt.party.name}`),
+          referenceNumber: referenceNumber || null,
+          paymentMethod: paymentMethod || "UPI",
           type: "SETTLEMENT",
           amount: numAmount,
           transactionDate: date,
@@ -79,15 +83,18 @@ export async function POST(request: Request) {
           transactionId: settlementTx.id,
           amountPaid: numAmount,
           paymentDate: date,
+          paymentMethod: paymentMethod || "UPI",
+          referenceNumber: referenceNumber || null,
           notes: notes || null,
         },
       });
 
-      // 3. Update Debt remainingAmount and status
+      // 3. Update Debt remainingAmount, paidAmount and status
       await tx.debt.update({
         where: { id: debt.id },
         data: {
           remainingAmount: newRemaining,
+          paidAmount: newPaid,
           status: newStatus,
         },
       });

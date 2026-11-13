@@ -8,7 +8,17 @@ if (!fs.existsSync(schemaPath)) {
 }
 
 // 1. Resolve database URL from environment variables
-let dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_PRISMA_URL || process.env.POSTGRES_URL || '';
+let dbUrl =
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_PRISMA_URL ||
+  process.env.POSTGRES_URL ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.DATABASE_PRISMA_URL ||
+  process.env.NEON_DATABASE_URL ||
+  process.env.SUPABASE_DATABASE_URL ||
+  '';
+
+dbUrl = dbUrl.trim().replace(/^["']|["']$/g, '');
 
 // 2. Fallback to reading .env file if DATABASE_URL is not in process.env
 if (!dbUrl && fs.existsSync(path.join(__dirname, '..', '.env'))) {
@@ -28,8 +38,8 @@ if (!dbUrl && fs.existsSync(path.join(__dirname, '..', '.env'))) {
 
 // 3. Determine provider
 if (dbUrl.startsWith('postgres://')) {
-  process.env.DATABASE_URL = dbUrl.replace('postgres://', 'postgresql://');
-  dbUrl = process.env.DATABASE_URL;
+  dbUrl = dbUrl.replace('postgres://', 'postgresql://');
+  process.env.DATABASE_URL = dbUrl;
 }
 
 const isPostgres = dbUrl.startsWith('postgresql://');
@@ -45,6 +55,7 @@ if (isPostgres) {
   } else {
     console.log('[prepare-prisma] schema.prisma provider is already "postgresql".');
   }
+  process.env.DATABASE_URL = dbUrl;
 } else {
   console.log('[prepare-prisma] Detected SQLite or local environment. Configuring provider = "sqlite"...');
   if (schema.includes('provider = "postgresql"')) {

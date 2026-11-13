@@ -32,6 +32,8 @@ export default function ExpensesPage() {
   // Filters & Search
   const [period, setPeriod] = useState("all");
   const [paymentMethod, setPaymentMethod] = useState("all");
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [categories, setCategories] = useState<any[]>([]);
   const [search, setSearch] = useState("");
 
   // Modals
@@ -39,6 +41,15 @@ export default function ExpensesPage() {
   const [formMode, setFormMode] = useState<"create" | "edit">("create");
   const [selectedTx, setSelectedTx] = useState<any>(null);
   const [detailTx, setDetailTx] = useState<any>(null);
+
+  useEffect(() => {
+    fetch("/api/categories")
+      .then((r) => r.json())
+      .then((cats) => {
+        if (Array.isArray(cats)) setCategories(cats.filter((c: any) => c.type === "EXPENSE"));
+      })
+      .catch((err) => console.error(err));
+  }, []);
 
   const fetchExpenses = () => {
     setLoading(true);
@@ -55,6 +66,9 @@ export default function ExpensesPage() {
           if (paymentMethod !== "all") {
             list = list.filter((i) => i.paymentMethod === paymentMethod);
           }
+          if (selectedCategory !== "all") {
+            list = list.filter((i) => i.categoryId === selectedCategory);
+          }
           setExpenses(list);
         }
       })
@@ -67,7 +81,7 @@ export default function ExpensesPage() {
     const handleDataChange = () => fetchExpenses();
     window.addEventListener("finance_data_changed", handleDataChange);
     return () => window.removeEventListener("finance_data_changed", handleDataChange);
-  }, [period, paymentMethod]);
+  }, [period, paymentMethod, selectedCategory]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,6 +109,27 @@ export default function ExpensesPage() {
     setFormMode("create");
     setFormOpen(true);
   };
+
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const endOfToday = startOfToday + 86400000;
+  const startOfWeek = new Date(now).setDate(now.getDate() - now.getDay());
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  const todayExpenseTotal = expenses
+    .filter((e) => {
+      const t = new Date(e.transactionDate).getTime();
+      return t >= startOfToday && t < endOfToday;
+    })
+    .reduce((sum, item) => sum + item.amount, 0);
+
+  const weekExpenseTotal = expenses
+    .filter((e) => new Date(e.transactionDate).getTime() >= startOfWeek)
+    .reduce((sum, item) => sum + item.amount, 0);
+
+  const monthExpenseTotal = expenses
+    .filter((e) => new Date(e.transactionDate).getTime() >= startOfMonth)
+    .reduce((sum, item) => sum + item.amount, 0);
 
   const totalExpense = expenses.reduce((sum, item) => sum + item.amount, 0);
 
@@ -169,16 +204,64 @@ export default function ExpensesPage() {
         </div>
       </div>
 
-      {/* KPI Highlight Card */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      {/* KPI Highlight Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <Card className="bg-rose-50/40 dark:bg-rose-950/20 border-rose-200/80 dark:border-rose-900/60">
           <CardHeader className="pb-1">
             <span className="text-xs font-bold uppercase tracking-wider text-rose-800 dark:text-rose-400">
-              {language === "te" ? "మొత్తం ఖర్చులు" : "Total Filtered Expenses"}
+              {language === "te" ? "నేటి ఖర్చులు" : "Today's Expenses"}
             </span>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-black text-rose-600 dark:text-rose-400">
+            <div className="text-2xl sm:text-3xl font-black text-rose-600 dark:text-rose-400">
+              {formatCurrency(todayExpenseTotal)}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {language === "te" ? "ఈ రోజు చేసిన ఖర్చులు" : "today's daily spend"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-amber-50/40 dark:bg-amber-950/20 border-amber-200/80 dark:border-amber-900/60">
+          <CardHeader className="pb-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400">
+              {language === "te" ? "ఈ వారపు ఖర్చులు" : "This Week's Expenses"}
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-black text-amber-600 dark:text-amber-400">
+              {formatCurrency(weekExpenseTotal)}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {language === "te" ? "గత ఆదివారం నుండి" : "current week total"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-purple-50/40 dark:bg-purple-950/20 border-purple-200/80 dark:border-purple-900/60">
+          <CardHeader className="pb-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-purple-800 dark:text-purple-400">
+              {language === "te" ? "ఈ నెల ఖర్చులు" : "This Month's Expenses"}
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-black text-purple-600 dark:text-purple-400">
+              {formatCurrency(monthExpenseTotal)}
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+              {language === "te" ? "ప్రస్తుత నెల మొత్తం" : "current month total"}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-slate-50/40 dark:bg-slate-900/40 border-slate-200/80 dark:border-slate-800">
+          <CardHeader className="pb-1">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+              {language === "te" ? "మొత్తం ఫిల్టర్ చేసిన ఖర్చులు" : "Total Filtered"}
+            </span>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
               {formatCurrency(totalExpense)}
             </div>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
@@ -218,24 +301,46 @@ export default function ExpensesPage() {
           </div>
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-            {/* Payment Method Filter */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
-                <CreditCard size={13} />
-                {language === "te" ? "పద్ధతి:" : "Method:"}
-              </span>
-              <select
-                value={paymentMethod}
-                onChange={(e) => setPaymentMethod(e.target.value)}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs text-slate-700 dark:text-slate-300 font-semibold"
-              >
-                <option value="all">{t("common.all")}</option>
-                <option value="UPI">UPI</option>
-                <option value="CASH">Cash</option>
-                <option value="BANK_TRANSFER">Bank Transfer</option>
-                <option value="DEBIT_CARD">Debit Card</option>
-                <option value="CREDIT_CARD">Credit Card</option>
-              </select>
+            {/* Category & Payment Method Filter */}
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Category Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-400">
+                  {language === "te" ? "వర్గం:" : "Category:"}
+                </span>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs text-slate-700 dark:text-slate-300 font-semibold"
+                >
+                  <option value="all">{language === "te" ? "అన్ని వర్గాలు" : "All Categories"}</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {language === "te" ? c.nameTe : c.nameEn}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Payment Method Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
+                  <CreditCard size={13} />
+                  {language === "te" ? "పద్ధతి:" : "Method:"}
+                </span>
+                <select
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs text-slate-700 dark:text-slate-300 font-semibold"
+                >
+                  <option value="all">{t("common.all")}</option>
+                  <option value="UPI">UPI</option>
+                  <option value="CASH">Cash</option>
+                  <option value="BANK_TRANSFER">Bank Transfer</option>
+                  <option value="DEBIT_CARD">Debit Card</option>
+                  <option value="CREDIT_CARD">Credit Card</option>
+                </select>
+              </div>
             </div>
 
             {/* Keyword Search */}

@@ -6,11 +6,12 @@ import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { useTheme } from "@/lib/theme/ThemeContext";
 import {
   LayoutDashboard,
-  ArrowLeftRight,
-  Wallet,
-  HandCoins,
-  PieChart,
-  Target,
+  TrendingDown,
+  Download,
+  Clock,
+  Calendar,
+  CalendarDays,
+  History,
   BarChart3,
   Settings,
   Languages,
@@ -18,15 +19,8 @@ import {
   Moon,
   Menu,
   X,
-  Sparkles,
-  ChevronRight,
-  ShieldCheck,
-  TrendingUp,
-  TrendingDown,
-  Send,
-  Download,
-  Clock,
-  CheckCircle2,
+  Wallet,
+  ArrowLeftRight,
 } from "lucide-react";
 import { sampleUserProfile } from "@/lib/sampleData";
 
@@ -50,35 +44,25 @@ export function Sidebar() {
 
   const navSections: NavSection[] = [
     {
-      title: language === "te" ? "ప్రధాన మెనూ" : "Overview",
+      title: language === "te" ? "ప్రధాన మెనూ" : "Core Modules",
       items: [
         { href: "/", label: t("nav.dashboard"), icon: LayoutDashboard },
-        { href: "/accounts", label: t("nav.accounts"), icon: Wallet },
-        { href: "/transactions", label: t("nav.transactions"), icon: ArrowLeftRight },
-      ],
-    },
-    {
-      title: language === "te" ? "రాబడి & ఖర్చుల నిర్వహణ" : "Cash Flow Ledgers",
-      items: [
-        { href: "/income", label: t("nav.income"), icon: TrendingUp },
-        { href: "/expenses", label: t("nav.expenses"), icon: TrendingDown },
-        { href: "/paid-money", label: t("nav.paidMoney"), icon: Send },
+        { href: "/expenses", label: t("nav.dailyExpenses"), icon: TrendingDown },
         { href: "/received-money", label: t("nav.receivedMoney"), icon: Download },
       ],
     },
     {
-      title: language === "te" ? "బకాయిలు & అప్పులు" : "Dues & Debts",
+      title: language === "te" ? "చెల్లింపుల ట్రాకింగ్" : "Payment Tracking",
       items: [
         { href: "/pending-payments", label: t("nav.pendingPayments"), icon: Clock },
-        { href: "/pending-receivables", label: t("nav.pendingReceivables"), icon: CheckCircle2 },
-        { href: "/debts", label: t("nav.debts"), icon: HandCoins },
+        { href: "/weekly-payments", label: t("nav.weeklyPayments"), icon: Calendar },
+        { href: "/monthly-payments", label: t("nav.monthlyPayments"), icon: CalendarDays },
+        { href: "/paid-history", label: t("nav.paidHistory"), icon: History },
       ],
     },
     {
-      title: language === "te" ? "ప్రణాళిక & విశ్లేషణ" : "Planning & Reports",
+      title: language === "te" ? "విశ్లేషణ & సెట్టింగ్‌లు" : "Analytics & Setup",
       items: [
-        { href: "/budgets", label: t("nav.budgets"), icon: PieChart },
-        { href: "/savings", label: t("nav.savings"), icon: Target },
         { href: "/reports", label: t("nav.reports"), icon: BarChart3 },
         { href: "/settings", label: t("nav.settings"), icon: Settings },
       ],
