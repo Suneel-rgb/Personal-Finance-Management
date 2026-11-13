@@ -69,6 +69,9 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     fetchTransactions();
+    const handleDataChange = () => fetchTransactions();
+    window.addEventListener("finance_data_changed", handleDataChange);
+    return () => window.removeEventListener("finance_data_changed", handleDataChange);
   }, [period, type, paymentMethod]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {

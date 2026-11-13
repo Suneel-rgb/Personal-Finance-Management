@@ -95,6 +95,9 @@ export default function BudgetsPage() {
         setShowAddModal(false);
         fetchBudgets();
         window.dispatchEvent(new Event("finance_data_changed"));
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Failed to set budget");
       }
     } catch (err) {
       console.error(err);

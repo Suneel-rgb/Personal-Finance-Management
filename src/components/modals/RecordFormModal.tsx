@@ -57,9 +57,12 @@ export function RecordFormModal({
       fetch("/api/parties").then((r) => r.json()),
     ])
       .then(([accs, cats, pts]) => {
-        if (Array.isArray(accs)) {
+        if (Array.isArray(accs) && accs.length > 0) {
           setAccounts(accs);
-          if (accs.length > 0 && !accountId) setAccountId(accs[0].id);
+          setAccountId((prev) => (prev && accs.some((a) => a.id === prev) ? prev : accs[0].id));
+          if (accs.length > 1) {
+            setToAccountId((prev) => (prev && accs.some((a) => a.id === prev && a.id !== accs[0].id) ? prev : accs[1].id));
+          }
         }
         if (Array.isArray(cats)) setCategories(cats);
         if (Array.isArray(pts)) setParties(pts);
@@ -83,6 +86,7 @@ export function RecordFormModal({
     } else {
       setType(defaultType);
       setAmount("");
+      setCategoryId("");
       setNotes("");
       setPaymentMethod("UPI");
       setTransactionDate(new Date().toISOString().split("T")[0]);
@@ -103,8 +107,14 @@ export function RecordFormModal({
       return;
     }
 
-    if (!accountId) {
-      setError(language === "te" ? "ఖాతా ఎంచుకోండి" : "Please select an account");
+    const effectiveAccountId = accountId || (accounts.length > 0 ? accounts[0].id : "");
+    if (!effectiveAccountId) {
+      setError(language === "te" ? "దయచేసి ఒక ఖాతాను ఎంచుకోండి లేదా ఖాతాను సృష్టించండి" : "Please select or create an account first");
+      return;
+    }
+
+    if (type === "TRANSFER" && (!toAccountId || effectiveAccountId === toAccountId)) {
+      setError(language === "te" ? "బదిలీ కోసం వేరే ఖాతాను ఎంచుకోండి" : "Please select a different destination account");
       return;
     }
 
@@ -127,7 +137,7 @@ export function RecordFormModal({
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            accountId,
+            accountId: effectiveAccountId,
             categoryId: categoryId || null,
             amount: numAmount,
             paymentMethod,
@@ -145,7 +155,7 @@ export function RecordFormModal({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            accountId,
+            accountId: effectiveAccountId,
             toAccountId: type === "TRANSFER" ? toAccountId : undefined,
             categoryId: categoryId || undefined,
             partyId: finalPartyId || undefined,

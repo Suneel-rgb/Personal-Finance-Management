@@ -119,6 +119,10 @@ export default function PendingPaymentsPage() {
         setNotes("");
         setShowAddModal(false);
         fetchPayables();
+        window.dispatchEvent(new Event("finance_data_changed"));
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Failed to create payable record");
       }
     } catch (err) {
       console.error(err);

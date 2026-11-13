@@ -159,6 +159,9 @@ export default function AccountsPage() {
         setShowAddModal(false);
         fetchAccounts();
         window.dispatchEvent(new Event("finance_data_changed"));
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Failed to create account");
       }
     } catch (err) {
       console.error(err);

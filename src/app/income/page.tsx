@@ -64,6 +64,9 @@ export default function IncomePage() {
 
   useEffect(() => {
     fetchIncomes();
+    const handleDataChange = () => fetchIncomes();
+    window.addEventListener("finance_data_changed", handleDataChange);
+    return () => window.removeEventListener("finance_data_changed", handleDataChange);
   }, [period, paymentMethod]);
 
   const handleSearch = (e: React.FormEvent) => {

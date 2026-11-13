@@ -24,6 +24,7 @@
 .DS_Store
 *.pem
 *.db
+!prisma/template.db
 *.db-journal
 *.sqlite
 scratch/

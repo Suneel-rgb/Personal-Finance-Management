@@ -118,6 +118,10 @@ export default function PendingReceivablesPage() {
         setNotes("");
         setShowAddModal(false);
         fetchReceivables();
+        window.dispatchEvent(new Event("finance_data_changed"));
+      } else {
+        const errData = await res.json();
+        alert(errData.error || "Failed to create receivable record");
       }
     } catch (err) {
       console.error(err);

@@ -58,9 +58,12 @@ export function AddTransactionModal({
         setCategories(Array.isArray(cats) ? cats : []);
         setParties(Array.isArray(pts) ? pts : []);
 
-        if (Array.isArray(accs) && accs.length > 0 && !accountId) {
-          setAccountId(accs[0].id);
-          if (accs.length > 1) setToAccountId(accs[1].id);
+        if (Array.isArray(accs) && accs.length > 0) {
+          setAccounts(accs);
+          setAccountId((prev) => (prev && accs.some((a) => a.id === prev) ? prev : accs[0].id));
+          if (accs.length > 1) {
+            setToAccountId((prev) => (prev && accs.some((a) => a.id === prev && a.id !== accs[0].id) ? prev : accs[1].id));
+          }
         }
       })
       .catch((err) => console.error(err))
@@ -79,12 +82,13 @@ export function AddTransactionModal({
       return;
     }
 
-    if (!accountId) {
-      setError(language === "te" ? "ఖాతా ఎంచుకోండి" : "Please select an account");
+    const effectiveAccountId = accountId || (accounts.length > 0 ? accounts[0].id : "");
+    if (!effectiveAccountId) {
+      setError(language === "te" ? "దయచేసి ఒక ఖాతాను ఎంచుకోండి" : "Please select an account");
       return;
     }
 
-    if (type === "TRANSFER" && (!toAccountId || accountId === toAccountId)) {
+    if (type === "TRANSFER" && (!toAccountId || effectiveAccountId === toAccountId)) {
       setError(
         language === "te"
           ? "బదిలీ చేయడానికి వేరే ఖాతాను ఎంచుకోండి"
@@ -114,7 +118,7 @@ export function AddTransactionModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          accountId,
+          accountId: effectiveAccountId,
           toAccountId: type === "TRANSFER" ? toAccountId : undefined,
           categoryId: type === "INCOME" || type === "EXPENSE" ? categoryId || undefined : undefined,
           partyId: (type === "LEND" || type === "BORROW") ? finalPartyId || undefined : undefined,
