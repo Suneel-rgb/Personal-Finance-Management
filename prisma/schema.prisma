@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                String         @id @default(uuid())
+  email             String         @unique
+  fullName          String
+  preferredLanguage String         @default("en") // "en" | "te"
+  baseCurrency      String         @default("INR") // "INR" (₹)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  accounts          Account[]
+  categories        Category[]
+  parties           Party[]
+  transactions      Transaction[]
+  debts             Debt[]
+  budgets           Budget[]
+  savingsGoals      SavingsGoal[]
+}
+
+model Account {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String        // e.g. "SBI Savings", "Cash in Hand", "HDFC Credit Card"
+  type           String        @default("BANK") // CASH, BANK, CREDIT_CARD, DIGITAL_WALLET, INVESTMENT
+  initialBalance Float         @default(0.0)
+  currentBalance Float         @default(0.0)
+  accountNumber  String?
+  color          String?       @default("#3B82F6")
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  fromTransactions    Transaction[]         @relation("FromAccount")
+  toTransactions      Transaction[]         @relation("ToAccount")
+  savingsContributions SavingsContribution[]
+
+  @@index([userId])
+}
+
+model Category {
+  id          String        @id @default(uuid())
+  userId      String?       // null = system default category
+  user        User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nameEn      String        // e.g. "Groceries", "Salary"
+  nameTe      String        // e.g. "కిరాణా సరుకులు", "జీతం"
+  type        String        // INCOME | EXPENSE
+  icon        String?       @default("tag")
+  color       String?       @default("#10B981")
+  isDefault   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@index([userId])
+}
+
+model Party {
+  id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String        // Person or Contact Name (e.g. Ramesh, Priya, Landlord)
+  phone       String?
+  email       String?
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  debts        Debt[]
+  transactions Transaction[]
+
+  @@index([userId])
+}
+
+model Debt {
+  id              String           @id @default(uuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  partyId         String
+  party           Party            @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  type            String           // "LENT" (Money to receive / receivable) | "BORROWED" (Money to pay / payable)
+  originalAmount  Float
+  remainingAmount Float
+  dueDate         DateTime?
+  status          String           @default("PENDING") // PENDING, PARTIALLY_PAID, SETTLED, OVERDUE
+  notes           String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  settlements     DebtSettlement[]
+  transactions    Transaction[]
+
+  @@index([userId, status])
+  @@index([partyId])
+}
+
+model Transaction {
+  id              String          @id @default(uuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         Account         @relation("FromAccount", fields: [accountId], references: [id], onDelete: Restrict)
+  toAccountId     String?
+  toAccount       Account?        @relation("ToAccount", fields: [toAccountId], references: [id], onDelete: Restrict)
+  categoryId      String?
+  category        Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  partyId         String?
+  party           Party?          @relation(fields: [partyId], references: [id], onDelete: SetNull)
+  debtId          String?
+  debt            Debt?           @relation(fields: [debtId], references: [id], onDelete: SetNull)
+  type            String          // INCOME, EXPENSE, TRANSFER, LEND, BORROW, SETTLEMENT
+  amount          Float
+  paymentMethod   String?         @default("UPI") // CASH, UPI, BANK_TRANSFER, DEBIT_CARD, CREDIT_CARD, CHEQUE
+  transactionDate DateTime
+  notes           String?
+  receiptUrl      String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  debtSettlement  DebtSettlement?
+
+  @@index([userId, transactionDate])
+  @@index([accountId])
+  @@index([type])
+}
+
+model DebtSettlement {
+  id            String      @id @default(uuid())
+  debtId        String
+  debt          Debt        @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  amountPaid    Float
+  paymentDate   DateTime
+  notes         String?
+  createdAt     DateTime    @default(now())
+
+  @@index([debtId])
+}
+
+model Budget {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryId        String
+  category          Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  period            String   @default("MONTHLY") // WEEKLY, MONTHLY, YEARLY
+  amountLimit       Float
+  alertThresholdPct Int      @default(80)
+  startDate         DateTime
+  endDate           DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, categoryId, startDate, endDate])
+}
+
+model SavingsGoal {
+  id            String                @id @default(uuid())
+  userId        String
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nameEn        String
+  nameTe        String
+  targetAmount  Float
+  currentAmount Float                 @default(0.0)
+  targetDate    DateTime?
+  color         String?               @default("#6366F1")
+  isCompleted   Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  contributions SavingsContribution[]
+
+  @@index([userId])
+}
+
+model SavingsContribution {
+  id        String      @id @default(uuid())
+  goalId    String
+  goal      SavingsGoal @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  accountId String
+  account   Account     @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  amount    Float
+  date      DateTime    @default(now())
+  notes     String?
+  createdAt DateTime    @default(now())
+
+  @@index([goalId])
+  @@index([accountId])
+}
+
