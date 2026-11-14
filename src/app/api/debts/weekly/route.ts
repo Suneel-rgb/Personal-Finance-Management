@@ -34,8 +34,10 @@ export async function GET(request: Request) {
     });
 
     const now = new Date();
-    // Start and end of current week (Sunday to Saturday or Monday to Sunday)
-    const dayOfWeek = now.getDay(); // 0 is Sunday
+    now.setHours(0, 0, 0, 0);
+
+    // Start and end of current week (Sunday to Saturday)
+    const dayOfWeek = now.getDay();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - dayOfWeek);
     startOfWeek.setHours(0, 0, 0, 0);
@@ -47,6 +49,7 @@ export async function GET(request: Request) {
     // 2. Aggregate installments across all multiple lenders/people
     const allInstallments: any[] = [];
     const thisWeekInstallments: any[] = [];
+    const paidInstallments: any[] = [];
     let totalDueThisWeek = 0;
     let totalWeeklyRemaining = 0;
     let totalWeeklyPaid = 0;
@@ -59,8 +62,34 @@ export async function GET(request: Request) {
 
       loan.installments.forEach((inst) => {
         const due = new Date(inst.dueDate);
-        const isUnpaid = inst.status !== "PAID" && inst.status !== "SETTLED";
-        const isPastDue = isUnpaid && due < now;
+        due.setHours(0, 0, 0, 0);
+
+        const isPaid = inst.status === "PAID" || inst.status === "SETTLED";
+        const isUnpaid = !isPaid;
+
+        // Calculate timing differences
+        let wasPaidLate = false;
+        let daysLate = 0;
+        let isMissed = false;
+        let daysMissed = 0;
+
+        if (isPaid && inst.paidDate) {
+          const paidD = new Date(inst.paidDate);
+          paidD.setHours(0, 0, 0, 0);
+          const diffDays = Math.round((paidD.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 0) {
+            wasPaidLate = true;
+            daysLate = diffDays;
+          }
+        } else if (isUnpaid) {
+          const diffDays = Math.round((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+          if (diffDays > 0) {
+            isMissed = true;
+            daysMissed = diffDays;
+          }
+        }
+
+        const isPastDue = isUnpaid && isMissed;
         const isDueThisWeek = due >= startOfWeek && due <= endOfWeek;
 
         const enhancedInst = {
@@ -72,11 +101,20 @@ export async function GET(request: Request) {
           debtPaidAmount: loan.paidAmount,
           disbursedAmount: loan.disbursedAmount,
           installmentDay: loan.installmentDay,
+          isPaid,
           isPastDue,
           isDueThisWeek,
+          isMissed,
+          daysMissed,
+          wasPaidLate,
+          daysLate,
         };
 
         allInstallments.push(enhancedInst);
+
+        if (isPaid) {
+          paidInstallments.push(enhancedInst);
+        }
 
         // Include in "Due This Week" if unpaid and falling in current week OR past overdue
         if (isUnpaid && (isDueThisWeek || isPastDue)) {
@@ -88,6 +126,13 @@ export async function GET(request: Request) {
 
     // Sort this week installments: overdue first, then by dueDate asc
     thisWeekInstallments.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+
+    // Sort paid installments: latest paidDate first
+    paidInstallments.sort((a, b) => {
+      const timeA = a.paidDate ? new Date(a.paidDate).getTime() : 0;
+      const timeB = b.paidDate ? new Date(b.paidDate).getTime() : 0;
+      return timeB - timeA;
+    });
 
     // Filter by search query if present
     let filteredLoans = weeklyLoans;
@@ -108,6 +153,8 @@ export async function GET(request: Request) {
     return NextResponse.json({
       weeklyLoans: filteredLoans,
       thisWeekInstallments,
+      paidInstallments,
+      allInstallments,
       totalDueThisWeek,
       totalWeeklyRemaining,
       totalWeeklyPaid,
@@ -288,4 +335,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message || "Failed to create weekly payment" }, { status: 500 });
   }
 }
-

@@ -276,6 +276,11 @@ export default function PaidHistoryPage() {
                           <strong className="text-slate-700 dark:text-slate-200">{item.debt?.party?.name}</strong>
                         </span>
                         <span>• {formatDate(item.paymentDate)}</span>
+                        {item.debt?.dueDate && (
+                          <span className="text-[11px] text-slate-400">
+                            ({language === "te" ? "గడువు:" : "Due:"} {formatDate(item.debt.dueDate)})
+                          </span>
+                        )}
                         <span>• {item.paymentMethod || "UPI"}</span>
                         {item.referenceNumber && (
                           <span className="font-mono text-[11px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-md text-slate-600 dark:text-slate-300">

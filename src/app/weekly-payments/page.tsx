@@ -24,6 +24,8 @@ import {
   Building2,
   Banknote,
   Check,
+  AlertTriangle,
+  History,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -37,6 +39,8 @@ export default function WeeklyPaymentsPage() {
   // Data states
   const [weeklyLoans, setWeeklyLoans] = useState<any[]>([]);
   const [thisWeekInstallments, setThisWeekInstallments] = useState<any[]>([]);
+  const [paidInstallments, setPaidInstallments] = useState<any[]>([]);
+  const [allInstallments, setAllInstallments] = useState<any[]>([]);
   const [totalDueThisWeek, setTotalDueThisWeek] = useState(0);
   const [totalWeeklyRemaining, setTotalWeeklyRemaining] = useState(0);
   const [totalWeeklyPaid, setTotalWeeklyPaid] = useState(0);
@@ -45,7 +49,8 @@ export default function WeeklyPaymentsPage() {
   const [loading, setLoading] = useState(true);
 
   // Tab & Filter states
-  const [activeTab, setActiveTab] = useState<"this_week" | "all_loans">("this_week");
+  const [activeTab, setActiveTab] = useState<"this_week" | "all_loans" | "paid_history">("this_week");
+  const [scheduleSubFilter, setScheduleSubFilter] = useState<"due_only" | "paid_only" | "all">("due_only");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [expandedLoanId, setExpandedLoanId] = useState<string | null>(null);
@@ -60,7 +65,6 @@ export default function WeeklyPaymentsPage() {
   const [originalAmount, setOriginalAmount] = useState("");
   const [installmentAmount, setInstallmentAmount] = useState("");
   const [firstDueDate, setFirstDueDate] = useState(() => {
-    // Default to next Monday or today
     const d = new Date();
     return d.toISOString().split("T")[0];
   });
@@ -106,6 +110,8 @@ export default function WeeklyPaymentsPage() {
         const json = await res.json();
         setWeeklyLoans(json.weeklyLoans || []);
         setThisWeekInstallments(json.thisWeekInstallments || []);
+        setPaidInstallments(json.paidInstallments || []);
+        setAllInstallments(json.allInstallments || []);
         setTotalDueThisWeek(json.totalDueThisWeek || 0);
         setTotalWeeklyRemaining(json.totalWeeklyRemaining || 0);
         setTotalWeeklyPaid(json.totalWeeklyPaid || 0);
@@ -261,22 +267,26 @@ export default function WeeklyPaymentsPage() {
 
   // Export to Excel
   const exportWeeklyExcel = () => {
-    const rows = weeklyLoans.map((l) => ({
-      [isTe ? "ఫైనాన్షియర్ / వ్యక్తి" : "Financier / Person"]: l.party?.name || "",
-      [isTe ? "స్వీకరించిన మొత్తం (₹)" : "Disbursed Amount (₹)"]: l.disbursedAmount || "N/A",
-      [isTe ? "చెల్లించాల్సిన మొత్తం (₹)" : "Total Repayment (₹)"]: l.originalAmount,
-      [isTe ? "వారపు వాయిదా (₹)" : "Weekly Installment (₹)"]: l.installmentAmount || "N/A",
-      [isTe ? "వారపు రోజు" : "Installment Day"]: l.installmentDay || "Monday",
-      [isTe ? "చెల్లించిన మొత్తం (₹)" : "Paid Amount (₹)"]: l.paidAmount,
-      [isTe ? "మిగిలిన బకాయి (₹)" : "Remaining Amount (₹)"]: l.remainingAmount,
-      [isTe ? "వాయిదాల సంఖ్య" : "Total Weeks"]: l.totalInstallments || "N/A",
-      [isTe ? "స్థితి" : "Status"]: l.status,
+    const rows = allInstallments.map((inst) => ({
+      [isTe ? "ఫైనాన్షియర్ / వ్యక్తి" : "Financier / Person"]: inst.lenderName,
+      [isTe ? "వాయిదా సంఖ్య" : "Week"]: `${inst.installmentNumber} of ${inst.totalInstallments}`,
+      [isTe ? "మొత్తం (₹)" : "Amount (₹)"]: inst.amount,
+      [isTe ? "షెడ్యూల్ / గడువు తేదీ" : "Scheduled / Due Date"]: formatDate(inst.dueDate),
+      [isTe ? "చెల్లించిన తేదీ" : "Actual Paid Date"]: inst.paidDate ? formatDate(inst.paidDate) : "Not Paid",
+      [isTe ? "ఆలస్యమా?" : "Late Status"]: inst.wasPaidLate
+        ? `Late by ${inst.daysLate} days`
+        : inst.isMissed
+        ? `Missed / Overdue by ${inst.daysMissed} days`
+        : inst.isPaid
+        ? "On Time"
+        : "Pending",
+      [isTe ? "చెల్లింపు స్థితి" : "Payment Status"]: inst.status,
     }));
 
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Weekly_Finance");
-    XLSX.writeFile(wb, `Weekly_Finance_${new Date().toISOString().split("T")[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Weekly_Installments");
+    XLSX.writeFile(wb, `Weekly_Installments_${new Date().toISOString().split("T")[0]}.xlsx`);
   };
 
   return (
@@ -294,8 +304,8 @@ export default function WeeklyPaymentsPage() {
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
                 {isTe
-                  ? "వారపు రుణాలు (ఉదా: ₹9,500 తీసుకొని ₹12,000 వారానికి ₹1,000 చొప్పున చెల్లించేవి) మరియు ప్రతి వ్యక్తి వారపు వాయిదాల ట్రాకింగ్."
-                  : "Track weekly micro-finance loans (e.g. Received ₹9,500, pay ₹12,000 at ₹1,000/week) across multiple people with one-click Mark as Paid."}
+                  ? "గడువు తప్పిన తేదీ (Missed Date) మరియు వాస్తవంగా చెల్లించిన తేదీ (Paid Date) పూర్తి ట్రాకింగ్‌తో కూడిన వారపు ఫైనాన్స్."
+                  : "Track weekly loans across multiple people with exact scheduled/missed dates vs actual paid dates."}
               </p>
             </div>
           </div>
@@ -383,7 +393,7 @@ export default function WeeklyPaymentsPage() {
               {formatCurrency(totalWeeklyPaid)}
             </span>
             <p className="text-[11px] text-slate-400 mt-1.5">
-              {isTe ? "వాస్తవంగా చెల్లించిన వాయిదాలు" : "Completed weekly payments"}
+              {paidInstallments.length} {isTe ? "వాయిదాలు విజయవంతంగా చెల్లించారు" : "installments completed"}
             </p>
           </CardContent>
         </Card>
@@ -409,12 +419,12 @@ export default function WeeklyPaymentsPage() {
         </Card>
       </div>
 
-      {/* 3. Navigation Tabs: "This Week's Schedule" vs "All Lenders & Loans" */}
+      {/* 3. Navigation Tabs: "This Week's Schedule" vs "All Lenders" vs "Paid History" */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
           <button
             onClick={() => setActiveTab("this_week")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "this_week"
                 ? "bg-indigo-600 text-white shadow-sm"
                 : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
@@ -431,16 +441,31 @@ export default function WeeklyPaymentsPage() {
 
           <button
             onClick={() => setActiveTab("all_loans")}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
               activeTab === "all_loans"
                 ? "bg-indigo-600 text-white shadow-sm"
                 : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
             }`}
           >
             <Users size={15} />
-            <span>{isTe ? "వ్యక్తుల వారీగా లోన్లు (All Lenders)" : "All Lenders & Loans"}</span>
+            <span>{isTe ? "వ్యక్తుల వారీగా లోన్లు" : "All Lenders & Loans"}</span>
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
               {weeklyLoans.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("paid_history")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === "paid_history"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
+            }`}
+          >
+            <History size={15} />
+            <span>{isTe ? "చెల్లించిన చరిత్ర (గడువు vs చెల్లించిన తేదీ)" : "Paid History (Missed vs Paid)"}</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+              {paidInstallments.length}
             </span>
           </button>
         </div>
@@ -458,21 +483,25 @@ export default function WeeklyPaymentsPage() {
         </div>
       </div>
 
-      {/* 4. TAB 1: THIS WEEK'S INSTALLMENTS (Organized by Day with 1-Click Mark as Paid) */}
+      {/* 4. TAB 1: THIS WEEK'S INSTALLMENTS (Shows Missed Dates & Mark as Paid) */}
       {activeTab === "this_week" && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-              <Clock size={16} className="text-amber-500" />
-              <span>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <Clock size={16} className="text-amber-500" />
+                <span>
+                  {isTe
+                    ? "ఈ వారం చెల్లించాల్సిన వాయిదాలు (వివిధ వ్యక్తులకు)"
+                    : "Payments to Make This Week (Across Multiple People)"}
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
                 {isTe
-                  ? "ఈ వారం చెల్లించాల్సిన వాయిదాలు (వివిధ వ్యక్తులకు)"
-                  : "Payments to Make This Week (Across Multiple People)"}
-              </span>
-            </h2>
-            <span className="text-xs text-slate-400 font-medium">
-              {isTe ? "ప్రతి వారం నిర్ణీత రోజున చెల్లించాల్సిన మొత్తం" : "Fixed day weekly installments"}
-            </span>
+                  ? "గడువు తప్పిన వాయిదాలు ఎరుపు రంగులో 'Missed Date' తో సహా స్పష్టంగా చూపబడతాయి."
+                  : "Missed payments are highlighted with their original missed dates and days overdue."}
+              </p>
+            </div>
           </div>
 
           {loading ? (
@@ -491,12 +520,16 @@ export default function WeeklyPaymentsPage() {
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
                   {isTe
                     ? "మీరు ఈ వారంలో చెల్లించాల్సిన అన్ని వాయిదాలు పూర్తయ్యాయి లేదా కొత్త వాయిదాలు షెడ్యూల్ కాలేదు."
-                    : "You have no outstanding weekly payments due this week. Click '+ Add Weekly Loan' to register a new agreement."}
+                    : "You have no outstanding weekly payments due this week. View 'Paid History' to check previous cleared installments."}
                 </p>
-                <div className="pt-2">
+                <div className="pt-2 flex items-center justify-center gap-2">
+                  <Button size="sm" onClick={() => setActiveTab("paid_history")} variant="outline" className="text-xs">
+                    <History size={14} className="mr-1" />
+                    {isTe ? "చెల్లించిన చరిత్ర చూడండి" : "View Paid History"}
+                  </Button>
                   <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-indigo-600 text-white text-xs">
                     <PlusCircle size={14} className="mr-1" />
-                    {isTe ? "+ కొత్త వారపు లోన్ జోడించండి" : "+ Add Weekly Loan"}
+                    {isTe ? "+ కొత్త వారపు లోన్" : "+ Add Weekly Loan"}
                   </Button>
                 </div>
               </CardContent>
@@ -504,7 +537,7 @@ export default function WeeklyPaymentsPage() {
           ) : (
             <div className="space-y-3">
               {thisWeekInstallments.map((inst) => {
-                const isOverdue = inst.isPastDue;
+                const isOverdue = inst.isPastDue || inst.isMissed;
                 const dueDateObj = new Date(inst.dueDate);
                 const dayName = dueDateObj.toLocaleDateString(language === "te" ? "te-IN" : "en-US", {
                   weekday: "long",
@@ -515,15 +548,15 @@ export default function WeeklyPaymentsPage() {
                     key={inst.id}
                     className={`overflow-hidden transition-all hover:border-indigo-300 dark:hover:border-indigo-700 shadow-xs ${
                       isOverdue
-                        ? "border-l-4 border-l-rose-500 bg-rose-50/20 dark:bg-rose-950/10"
-                        : "border-l-4 border-l-amber-500 bg-white dark:bg-slate-900"
+                        ? "border-l-4 border-l-rose-500 bg-rose-50/30 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/60"
+                        : "border-l-4 border-l-amber-500 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
                     }`}
                   >
                     <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       {/* Left: Day & Person info */}
                       <div className="flex items-start gap-3.5">
                         <div
-                          className={`p-3 rounded-2xl font-bold shrink-0 text-center min-w-[65px] ${
+                          className={`p-3 rounded-2xl font-bold shrink-0 text-center min-w-[70px] ${
                             isOverdue
                               ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
                               : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
@@ -532,41 +565,45 @@ export default function WeeklyPaymentsPage() {
                           <span className="text-[10px] uppercase block font-black leading-none mb-1">
                             {dayName.slice(0, 3)}
                           </span>
-                          <span className="text-base font-black leading-none block">
+                          <span className="text-lg font-black leading-none block">
                             {dueDateObj.getDate()}
                           </span>
                         </div>
 
-                        <div>
+                        <div className="space-y-1">
                           <div className="flex items-center gap-2">
                             <h3 className="text-base font-bold text-slate-900 dark:text-white">
                               {inst.lenderName}
                             </h3>
                             <Badge variant={isOverdue ? "danger" : "warning"}>
                               {isOverdue
-                                ? isTe ? "గడువు ముగిసింది" : "Overdue"
+                                ? isTe ? "⚠️ గడువు తప్పింది (Missed)" : "⚠️ Missed / Overdue"
                                 : isTe ? "ఈ వారం చెల్లించాలి" : "Due This Week"}
                             </Badge>
                           </div>
 
-                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1">
+                          <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-500 dark:text-slate-400">
                             <span className="font-semibold text-indigo-600 dark:text-indigo-400">
-                              {isTe ? "వాయిదా సంఖ్య: " : "Week: "}
+                              {isTe ? "వాయిదా: " : "Week: "}
                               {inst.installmentNumber} / {inst.totalInstallments}
                             </span>
                             <span>•</span>
-                            <span>
-                              {isTe ? "గడువు తేదీ: " : "Due: "}
-                              <strong>{formatDate(inst.dueDate)} ({dayName})</strong>
-                            </span>
-                            {inst.disbursedAmount && (
-                              <>
-                                <span>•</span>
+
+                            {/* Missed vs Scheduled Date Highlight */}
+                            {isOverdue ? (
+                              <span className="text-rose-600 dark:text-rose-400 font-bold bg-rose-100/70 dark:bg-rose-950/60 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                <AlertTriangle size={12} />
                                 <span>
-                                  {isTe ? "తీసుకున్నది: " : "Disbursed: "}
-                                  {formatCurrency(inst.disbursedAmount)}
+                                  {isTe
+                                    ? `గడువు తప్పిన తేదీ: ${formatDate(inst.dueDate)} (${inst.daysMissed} రోజులు ఆలస్యం)`
+                                    : `Missed Date: ${formatDate(inst.dueDate)} (${inst.daysMissed} days late)`}
                                 </span>
-                              </>
+                              </span>
+                            ) : (
+                              <span>
+                                {isTe ? "షెడ్యూల్ తేదీ: " : "Scheduled: "}
+                                <strong>{formatDate(inst.dueDate)} ({dayName})</strong>
+                              </span>
                             )}
                           </div>
                         </div>
@@ -576,13 +613,13 @@ export default function WeeklyPaymentsPage() {
                       <div className="flex items-center justify-between sm:justify-end gap-5 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
                         <div className="text-left sm:text-right">
                           <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                            {isTe ? "ఈ వారం చెల్లించాల్సినది" : "Amount to Pay"}
+                            {isTe ? "చెల్లించాల్సిన మొత్తం" : "Amount to Pay"}
                           </span>
                           <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
                             {formatCurrency(inst.amount)}
                           </span>
                           <span className="text-[10px] text-slate-400 block">
-                            {isTe ? "మొత్తం మిగిలిన అప్పు: " : "Remaining balance: "}
+                            {isTe ? "మిగిలిన అప్పు: " : "Remaining balance: "}
                             {formatCurrency(inst.debtRemainingAmount)}
                           </span>
                         </div>
@@ -609,12 +646,19 @@ export default function WeeklyPaymentsPage() {
       {activeTab === "all_loans" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
-              <Users size={16} className="text-indigo-600" />
-              <span>
-                {isTe ? "వ్యక్తుల వారీగా పూర్తి వారపు లోన్ల వివరాలు" : "All Weekly Agreements by Person"}
-              </span>
-            </h2>
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <Users size={16} className="text-indigo-600" />
+                <span>
+                  {isTe ? "వ్యక్తుల వారీగా పూర్తి వారపు లోన్ల వివరాలు" : "All Weekly Agreements by Person"}
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                {isTe
+                  ? "ప్రతి వ్యక్తి షెడ్యూల్‌లో ఏ వారం గడువు తప్పింది మరియు ఏ రోజున చెల్లించారో వివరంగా చూడవచ్చు."
+                  : "Expand any loan to see the full week-by-week breakdown with missed and paid dates."}
+              </p>
+            </div>
           </div>
 
           {loading ? (
@@ -630,12 +674,7 @@ export default function WeeklyPaymentsPage() {
                 <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
                   {isTe ? "ఎలాంటి వారపు లోన్లు నమోదు కాలేదు" : "No weekly loans recorded"}
                 </h3>
-                <p className="text-xs text-slate-400 mt-1 mb-4">
-                  {isTe
-                    ? "మీరు తీసుకున్న ఫైనాన్స్ (ఉదా: ₹9,500 తీసుకొని ₹12,000 చెల్లించేవి) ఇక్కడ నమోదు చేయండి."
-                    : "Add your weekly loans and financiers to automatically track all installments."}
-                </p>
-                <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-indigo-600 text-white text-xs">
+                <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-indigo-600 text-white text-xs mt-3">
                   <PlusCircle size={14} className="mr-1" />
                   {isTe ? "+ కొత్త వారపు లోన్ జోడించండి" : "+ Add Weekly Loan"}
                 </Button>
@@ -651,7 +690,6 @@ export default function WeeklyPaymentsPage() {
                 const totalCount = installments.length || loan.totalInstallments || 1;
                 const pct = Math.round((paidCount / totalCount) * 100);
 
-                // Find next unpaid installment
                 const nextDueInst = installments.find(
                   (i: any) => i.status !== "PAID" && i.status !== "SETTLED"
                 );
@@ -773,77 +811,145 @@ export default function WeeklyPaymentsPage() {
                       </div>
                     </div>
 
-                    {/* EXPANDED VIEW: Complete Week-by-Week Installment Table */}
+                    {/* EXPANDED VIEW: Complete Week-by-Week Installment Grid WITH MISSED VS PAID DATES */}
                     {isExpanded && (
                       <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 p-4 sm:p-5">
                         <div className="flex items-center justify-between mb-3">
                           <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
                             {isTe
-                              ? `${loan.party?.name} యొక్క పూర్తి ${installments.length} వారాల వాయిదాల జాబితా`
-                              : `Full ${installments.length}-Week Schedule for ${loan.party?.name}`}
+                              ? `${loan.party?.name} యొక్క పూర్తి ${installments.length} వారాల వాయిదాల జాబితా (గడువు తేదీ vs చెల్లించిన తేదీ)`
+                              : `Full ${installments.length}-Week Schedule for ${loan.party?.name} (Scheduled vs Paid Dates)`}
                           </h4>
                           <span className="text-[11px] text-slate-400 font-medium">
-                            {isTe ? "ప్రతి వారం వాయిదా చెల్లించినప్పుడు 'Mark as Paid' నొక్కండి" : "Click 'Mark as Paid' as you clear each week"}
+                            {isTe ? "గడువు తప్పిన తేదీ మరియు చెల్లించిన తేదీ వివరాలు" : "Track scheduled/missed dates and payment dates"}
                           </span>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {installments.map((inst: any) => {
                             const isPaid = inst.status === "PAID" || inst.status === "SETTLED";
-                            const d = new Date(inst.dueDate);
-                            const isPast = !isPaid && d < new Date();
+                            const due = new Date(inst.dueDate);
+                            due.setHours(0, 0, 0, 0);
+
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+
+                            // Calculate late or missed
+                            let wasPaidLate = false;
+                            let daysLate = 0;
+                            let isMissed = false;
+                            let daysMissed = 0;
+
+                            if (isPaid && inst.paidDate) {
+                              const paidD = new Date(inst.paidDate);
+                              paidD.setHours(0, 0, 0, 0);
+                              const diffDays = Math.round((paidD.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+                              if (diffDays > 0) {
+                                wasPaidLate = true;
+                                daysLate = diffDays;
+                              }
+                            } else if (!isPaid) {
+                              const diffDays = Math.round((today.getTime() - due.getTime()) / (1000 * 60 * 60 * 24));
+                              if (diffDays > 0) {
+                                isMissed = true;
+                                daysMissed = diffDays;
+                              }
+                            }
 
                             return (
                               <div
                                 key={inst.id}
-                                className={`p-3 rounded-xl border text-xs transition-all ${
+                                className={`p-3.5 rounded-2xl border text-xs transition-all space-y-2 ${
                                   isPaid
-                                    ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/60 text-emerald-900 dark:text-emerald-100"
-                                    : isPast
-                                    ? "bg-rose-50/60 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-100"
-                                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                                    ? wasPaidLate
+                                      ? "bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/60"
+                                      : "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/60"
+                                    : isMissed
+                                    ? "bg-rose-50/60 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900"
+                                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700"
                                 }`}
                               >
-                                <div className="flex items-center justify-between mb-1.5">
-                                  <span className="font-bold">
+                                {/* Header: Week # and Status Badge */}
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-800 dark:text-slate-200">
                                     {isTe ? `వారం ${inst.installmentNumber}` : `Week ${inst.installmentNumber}`}
                                   </span>
+
                                   {isPaid ? (
-                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900 px-1.5 py-0.5 rounded-full">
-                                      <Check size={10} /> Paid
-                                    </span>
-                                  ) : isPast ? (
-                                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-900 px-1.5 py-0.5 rounded-full">
-                                      Overdue
+                                    wasPaidLate ? (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded-full">
+                                        <AlertTriangle size={10} />
+                                        {isTe ? `ఆలస్యంగా (${daysLate}d)` : `Paid Late (${daysLate}d)`}
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900 px-1.5 py-0.5 rounded-full">
+                                        <Check size={10} /> {isTe ? "సమయానికి" : "Paid On Time"}
+                                      </span>
+                                    )
+                                  ) : isMissed ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 dark:text-rose-300 bg-rose-100 dark:bg-rose-900 px-1.5 py-0.5 rounded-full">
+                                      <AlertTriangle size={10} />
+                                      {isTe ? `మిస్సయింది (${daysMissed}d)` : `Missed (${daysMissed}d)`}
                                     </span>
                                   ) : (
-                                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded-full">
-                                      Pending
+                                    <span className="text-[10px] font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 rounded-full">
+                                      {isTe ? "రాబోయేది" : "Scheduled"}
                                     </span>
                                   )}
                                 </div>
 
-                                <div className="flex items-baseline justify-between mb-2">
-                                  <span className="text-sm font-black">
+                                {/* Amount */}
+                                <div className="flex items-baseline justify-between">
+                                  <span className="text-base font-black text-slate-900 dark:text-white">
                                     {formatCurrency(inst.amount)}
-                                  </span>
-                                  <span className="text-[10px] text-slate-400">
-                                    {formatDate(inst.dueDate)}
                                   </span>
                                 </div>
 
-                                {!isPaid ? (
+                                {/* Scheduled / Missed Date & Paid Date Box */}
+                                <div className="pt-2 border-t border-slate-100 dark:border-slate-700/60 space-y-1 text-[11px]">
+                                  {/* Scheduled / Missed Date */}
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-slate-400">
+                                      {isMissed || wasPaidLate
+                                        ? isTe ? "గడువు తప్పిన తేదీ:" : "Missed Date:"
+                                        : isTe ? "షెడ్యూల్ తేదీ:" : "Due Date:"}
+                                    </span>
+                                    <span className={`font-semibold ${isMissed || wasPaidLate ? "text-rose-600 dark:text-rose-400" : "text-slate-600 dark:text-slate-300"}`}>
+                                      {formatDate(inst.dueDate)}
+                                    </span>
+                                  </div>
+
+                                  {/* Actual Paid Date */}
+                                  {isPaid && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-slate-400">
+                                        {isTe ? "చెల్లించిన తేదీ:" : "Paid Date:"}
+                                      </span>
+                                      <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                                        {inst.paidDate ? formatDate(inst.paidDate) : formatDate(inst.dueDate)}
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {/* Late Days Note if paid after missed date */}
+                                  {wasPaidLate && (
+                                    <div className="text-[10px] text-amber-700 dark:text-amber-400 font-semibold text-center pt-0.5">
+                                      {isTe
+                                        ? `⚠️ గడువు ముగిసిన ${daysLate} రోజుల తర్వాత చెల్లించారు`
+                                        : `⚠️ Paid ${daysLate} days after missed date`}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Action */}
+                                {!isPaid && (
                                   <button
                                     onClick={() => handleOpenPay(inst)}
-                                    className="w-full py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1"
+                                    className="w-full py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs mt-1"
                                   >
-                                    <CheckCircle2 size={11} />
-                                    <span>{isTe ? "చెల్లించండి" : "Mark as Paid"}</span>
+                                    <CheckCircle2 size={12} />
+                                    <span>{isTe ? "చెల్లించినట్లు గుర్తించండి" : "Mark as Paid"}</span>
                                   </button>
-                                ) : (
-                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block text-center font-medium">
-                                    {inst.paidDate ? formatDate(inst.paidDate) : "Completed"}
-                                  </span>
                                 )}
                               </div>
                             );
@@ -859,7 +965,108 @@ export default function WeeklyPaymentsPage() {
         </div>
       )}
 
-      {/* 6. MODAL: ADD WEEKLY LOAN / AGREEMENT */}
+      {/* 6. TAB 3: PAID HISTORY (Complete Log of Missed Dates vs Paid Dates) */}
+      {activeTab === "paid_history" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+                <History size={16} className="text-emerald-600" />
+                <span>
+                  {isTe
+                    ? "చెల్లించిన వాయిదాల చరిత్ర (గడువు తప్పిన తేదీ vs చెల్లించిన తేదీ)"
+                    : "Completed Installments History (Missed Dates vs Actual Paid Dates)"}
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                {isTe
+                  ? "మీరు చెల్లించిన ప్రతి వాయిదా యొక్క అసలు షెడ్యూల్ తేదీ మరియు వాస్తవ చెల్లింపు తేదీ పోలిక."
+                  : "Complete audit log showing when payment was scheduled/missed and when you actually paid."}
+              </p>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-16">
+              <div className="inline-block h-8 w-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : paidInstallments.length === 0 ? (
+            <Card className="text-center py-12">
+              <CardContent>
+                <div className="h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400 mb-3">
+                  <History size={24} />
+                </div>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  {isTe ? "ఇంతవరకు చెల్లించిన వాయిదాలు లేవు" : "No paid installments recorded yet"}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  {isTe
+                    ? "మీరు వాయిదాను 'Mark as Paid' చేసిన వెంటనే అది ఇక్కడ కనిపిస్తుంది."
+                    : "When you mark an installment as paid, it will appear here with both scheduled and paid dates."}
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="overflow-hidden border-slate-200 dark:border-slate-800 shadow-sm">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 font-bold border-b border-slate-100 dark:border-slate-800">
+                    <tr>
+                      <th className="py-3 px-4">{isTe ? "ఫైనాన్షియర్ / వ్యక్తి" : "Financier / Person"}</th>
+                      <th className="py-3 px-4">{isTe ? "వాయిదా సంఖ్య" : "Installment"}</th>
+                      <th className="py-3 px-4 text-right">{isTe ? "మొత్తం (₹)" : "Amount (₹)"}</th>
+                      <th className="py-3 px-4">{isTe ? "గడువు / మిస్సయిన తేదీ" : "Scheduled / Missed Date"}</th>
+                      <th className="py-3 px-4">{isTe ? "వాస్తవంగా చెల్లించిన తేదీ" : "Actual Paid Date"}</th>
+                      <th className="py-3 px-4 text-center">{isTe ? "స్థితి & ఆలస్యం" : "Timing Status"}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {paidInstallments.map((inst: any) => {
+                      const wasPaidLate = inst.wasPaidLate;
+                      const daysLate = inst.daysLate || 0;
+
+                      return (
+                        <tr key={inst.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
+                            {inst.lenderName}
+                          </td>
+                          <td className="py-3 px-4 text-slate-600 dark:text-slate-300">
+                            {isTe ? `వారం ${inst.installmentNumber} / ${inst.totalInstallments}` : `Week ${inst.installmentNumber} of ${inst.totalInstallments}`}
+                          </td>
+                          <td className="py-3 px-4 text-right font-black text-slate-900 dark:text-white">
+                            {formatCurrency(inst.amount)}
+                          </td>
+                          <td className="py-3 px-4 font-semibold text-slate-600 dark:text-slate-300">
+                            {formatDate(inst.dueDate)}
+                          </td>
+                          <td className="py-3 px-4 font-bold text-emerald-600 dark:text-emerald-400">
+                            {inst.paidDate ? formatDate(inst.paidDate) : formatDate(inst.dueDate)}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            {wasPaidLate ? (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-950 px-2 py-0.5 rounded-full">
+                                <AlertTriangle size={11} />
+                                {isTe ? `ఆలస్యంగా చెల్లించారు (${daysLate} రోజులు)` : `Paid Late by ${daysLate} days`}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950 px-2 py-0.5 rounded-full">
+                                <Check size={11} />
+                                {isTe ? "సమయానికి చెల్లించారు" : "Paid On Time"}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* 7. MODAL: ADD WEEKLY LOAN / AGREEMENT */}
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
@@ -1072,7 +1279,7 @@ export default function WeeklyPaymentsPage() {
         </div>
       )}
 
-      {/* 7. MODAL: MARK INSTALLMENT AS PAID */}
+      {/* 8. MODAL: MARK INSTALLMENT AS PAID (Shows Missed Date vs Paid Date) */}
       {payingInstallment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
           <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 p-6 space-y-4">
@@ -1096,6 +1303,34 @@ export default function WeeklyPaymentsPage() {
               >
                 ✕
               </button>
+            </div>
+
+            {/* Missed / Scheduled Date Highlight Banner */}
+            <div className={`p-3 rounded-2xl border text-xs space-y-1 ${
+              payingInstallment.isPastDue || payingInstallment.isMissed
+                ? "bg-rose-50/70 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-900 dark:text-rose-200"
+                : "bg-indigo-50/70 dark:bg-indigo-950/40 border-indigo-200 dark:border-indigo-900 text-indigo-900 dark:text-indigo-200"
+            }`}>
+              <div className="flex items-center justify-between font-bold">
+                <span className="flex items-center gap-1.5">
+                  <Clock size={13} />
+                  <span>
+                    {payingInstallment.isPastDue || payingInstallment.isMissed
+                      ? isTe ? "గడువు తప్పిన తేదీ (Missed Date):" : "Scheduled / Missed Date:"
+                      : isTe ? "షెడ్యూల్ తేదీ (Due Date):" : "Scheduled Due Date:"}
+                  </span>
+                </span>
+                <span className="font-black underline">
+                  {formatDate(payingInstallment.dueDate)}
+                </span>
+              </div>
+              {payingInstallment.isMissed && (
+                <p className="text-[10px] text-rose-700 dark:text-rose-300 font-semibold">
+                  {isTe
+                    ? `⚠️ ఈ వాయిదా గడువు తేదీ ${formatDate(payingInstallment.dueDate)} న ముగిసింది (${payingInstallment.daysMissed} రోజులు ఆలస్యం).`
+                    : `⚠️ Original due date was ${formatDate(payingInstallment.dueDate)} (${payingInstallment.daysMissed} days late).`}
+                </p>
+              )}
             </div>
 
             <form onSubmit={handleConfirmPay} className="space-y-3.5 text-xs">
@@ -1133,13 +1368,29 @@ export default function WeeklyPaymentsPage() {
                 </select>
                 <span className="text-[10px] text-slate-400 block mt-0.5">
                   {isTe
-                    ? "ఈ మొత్తం ఎంచుకున్న ఖాతా నుండి స్వయంచాలకంగా తీసివేయబడుతుంది."
-                    : "This amount will be deducted from this account balance."}
+                    ? "ఈ మొత్తం ఎంచుకున్న ఖాతా బ్యాలెన్స్ నుండి తీసివేయబడుతుంది."
+                    : "This amount will be deducted from your account balance."}
                 </span>
               </div>
 
-              {/* Payment Method & Date */}
+              {/* Actual Paid Date & Payment Method */}
               <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isTe ? "వాస్తవంగా చెల్లించిన తేదీ *" : "Actual Paid Date *"}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={payDate}
+                    onChange={(e) => setPayDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
+                  />
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium block mt-0.5">
+                    {isTe ? "రికార్డ్ చేయబడే తేదీ" : "Date of payment recorded"}
+                  </span>
+                </div>
+
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                     {isTe ? "చెల్లింపు విధానం" : "Payment Method"}
@@ -1154,19 +1405,6 @@ export default function WeeklyPaymentsPage() {
                     <option value="BANK_TRANSFER">Bank Transfer</option>
                   </select>
                 </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {isTe ? "చెల్లించిన తేదీ" : "Payment Date"}
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={payDate}
-                    onChange={(e) => setPayDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
-                  />
-                </div>
               </div>
 
               {/* Notes */}
@@ -1176,7 +1414,7 @@ export default function WeeklyPaymentsPage() {
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Paid in cash to Mastan"
+                  placeholder="e.g. Paid in cash, cleared delayed installment"
                   value={payNotes}
                   onChange={(e) => setPayNotes(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
