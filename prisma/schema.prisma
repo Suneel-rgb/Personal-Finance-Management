@@ -91,9 +91,13 @@ model Debt {
   title           String?          // e.g. "Office Rent", "Worker Wages", "Supplier Mastan"
   type            String           // "LENT" (Money to receive / receivable) | "BORROWED" (Money to pay / payable)
   frequency       String           @default("ONE_TIME") // "WEEKLY" | "MONTHLY" | "ONE_TIME"
-  originalAmount  Float
+  originalAmount  Float            // Total to repay (e.g. 12000)
   remainingAmount Float
   paidAmount      Float            @default(0.0)
+  disbursedAmount Float?           // Initial money received from financier (e.g. 9500)
+  installmentAmount Float?         // Per week installment amount (e.g. 1000)
+  totalInstallments Int?           // Total number of installments/weeks (e.g. 12)
+  installmentDay  String?          // e.g. "Monday", "Tuesday"
   dueDate         DateTime?
   status          String           @default("PENDING") // PENDING, PARTIALLY_PAID, SETTLED, OVERDUE
   paymentMethod   String?          @default("UPI")
@@ -104,6 +108,7 @@ model Debt {
   updatedAt       DateTime         @updatedAt
 
   settlements     DebtSettlement[]
+  installments    Installment[]
   transactions    Transaction[]
 
   @@index([userId, status])
@@ -137,10 +142,33 @@ model Transaction {
   updatedAt       DateTime        @updatedAt
 
   debtSettlement  DebtSettlement?
+  installment     Installment?
 
   @@index([userId, transactionDate])
   @@index([accountId])
   @@index([type])
+}
+
+model Installment {
+  id                String       @id @default(uuid())
+  debtId            String
+  debt              Debt         @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  installmentNumber Int          // e.g. 1, 2, 3... 12
+  totalInstallments Int          // e.g. 12
+  dueDate           DateTime
+  amount            Float        // e.g. 1000
+  paidAmount        Float        @default(0.0)
+  status            String       @default("PENDING") // PENDING, PAID, PARTIALLY_PAID, OVERDUE
+  paidDate          DateTime?
+  paymentMethod     String?      @default("UPI")
+  notes             String?
+  transactionId     String?      @unique
+  transaction       Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([debtId, dueDate])
+  @@index([status])
 }
 
 model DebtSettlement {

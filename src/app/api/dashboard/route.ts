@@ -31,6 +31,7 @@ export async function GET() {
       where: { userId: user.id },
       include: {
         party: true,
+        installments: { orderBy: { installmentNumber: "asc" } },
         settlements: {
           include: {
             transaction: { select: { account: true, transactionDate: true } },

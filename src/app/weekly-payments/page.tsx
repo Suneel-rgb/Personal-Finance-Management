@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import {
   Calendar,
@@ -9,599 +9,1062 @@ import {
   Filter,
   CheckCircle2,
   Trash2,
-  Edit,
   Eye,
-  RefreshCw,
   Clock,
-  History,
   AlertCircle,
   Download,
+  Users,
+  Wallet,
+  ArrowRight,
+  TrendingDown,
+  Sparkles,
+  ChevronDown,
+  ChevronUp,
+  CreditCard,
+  Building2,
+  Banknote,
+  Check,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { SettleDebtModal } from "@/components/modals/SettleDebtModal";
 import * as XLSX from "xlsx";
 
 export default function WeeklyPaymentsPage() {
   const { t, language, formatCurrency, formatDate } = useLanguage();
+  const isTe = language === "te";
 
-  const [payments, setPayments] = useState<any[]>([]);
+  // Data states
+  const [weeklyLoans, setWeeklyLoans] = useState<any[]>([]);
+  const [thisWeekInstallments, setThisWeekInstallments] = useState<any[]>([]);
+  const [totalDueThisWeek, setTotalDueThisWeek] = useState(0);
+  const [totalWeeklyRemaining, setTotalWeeklyRemaining] = useState(0);
+  const [totalWeeklyPaid, setTotalWeeklyPaid] = useState(0);
+  const [activeLendersCount, setActiveLendersCount] = useState(0);
+  const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Tab & Filter states
+  const [activeTab, setActiveTab] = useState<"this_week" | "all_loans">("this_week");
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // all, PENDING, PARTIALLY_PAID, SETTLED, OVERDUE
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedLoanId, setExpandedLoanId] = useState<string | null>(null);
 
   // Modals
   const [showAddModal, setShowAddModal] = useState(false);
-  const [selectedForSettle, setSelectedForSettle] = useState<any>(null);
-  const [detailItem, setDetailItem] = useState<any>(null);
-  const [editItem, setEditItem] = useState<any>(null);
+  const [payingInstallment, setPayingInstallment] = useState<any | null>(null);
 
-  // Add Form
-  const [paymentName, setPaymentName] = useState("");
-  const [personCompany, setPersonCompany] = useState("");
-  const [amount, setAmount] = useState("");
-  const [dueDate, setDueDate] = useState("");
+  // Add Loan Form Fields
+  const [personName, setPersonName] = useState("");
+  const [disbursedAmount, setDisbursedAmount] = useState("");
+  const [originalAmount, setOriginalAmount] = useState("");
+  const [installmentAmount, setInstallmentAmount] = useState("");
+  const [firstDueDate, setFirstDueDate] = useState(() => {
+    // Default to next Monday or today
+    const d = new Date();
+    return d.toISOString().split("T")[0];
+  });
+  const [depositToAccount, setDepositToAccount] = useState(false);
+  const [selectedDepositAccountId, setSelectedDepositAccountId] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("UPI");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Edit Form
-  const [editName, setEditName] = useState("");
-  const [editPerson, setEditPerson] = useState("");
-  const [editAmount, setEditAmount] = useState("");
-  const [editDueDate, setEditDueDate] = useState("");
-  const [editNotes, setEditNotes] = useState("");
+  // Payment Form Fields (When marking installment as paid)
+  const [payAmount, setPayAmount] = useState("");
+  const [payAccountId, setPayAccountId] = useState("");
+  const [payDate, setPayDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [payMethod, setPayMethod] = useState("UPI");
+  const [payNotes, setPayNotes] = useState("");
+  const [payingLoading, setPayingLoading] = useState(false);
 
-  const fetchWeeklyPayments = () => {
+  // Auto-calculated fields for Add Form
+  const totalRepayNum = parseFloat(originalAmount) || 0;
+  const weeklyInstNum = parseFloat(installmentAmount) || 0;
+  const disbursedNum = parseFloat(disbursedAmount) || 0;
+
+  const calculatedWeeks = useMemo(() => {
+    if (totalRepayNum > 0 && weeklyInstNum > 0) {
+      return Math.ceil(totalRepayNum / weeklyInstNum);
+    }
+    return 0;
+  }, [totalRepayNum, weeklyInstNum]);
+
+  const calculatedDay = useMemo(() => {
+    if (!firstDueDate) return "Monday";
+    const d = new Date(firstDueDate);
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    return days[d.getDay()] || "Monday";
+  }, [firstDueDate]);
+
+  // Fetch Weekly Data
+  const fetchWeeklyData = async () => {
     setLoading(true);
-    fetch("/api/debts?frequency=WEEKLY")
-      .then((r) => r.json())
-      .then((res) => {
-        if (!res.error && res.payables) {
-          // Payables with Weekly frequency
-          let list = res.payables.filter(
-            (p: any) => p.frequency === "WEEKLY" || p.notes?.toLowerCase().includes("weekly")
-          );
-          if (statusFilter !== "all") {
-            list = list.filter((p: any) => p.status === statusFilter);
-          }
-          if (search.trim()) {
-            const q = search.toLowerCase();
-            list = list.filter(
-              (p: any) =>
-                p.title?.toLowerCase().includes(q) ||
-                p.party?.name?.toLowerCase().includes(q) ||
-                p.notes?.toLowerCase().includes(q)
-            );
-          }
-          setPayments(list);
-        }
-      })
-      .catch((err) => console.error(err))
-      .finally(() => setLoading(false));
+    try {
+      const res = await fetch(`/api/debts/weekly?search=${encodeURIComponent(search)}&status=${statusFilter}`);
+      if (res.ok) {
+        const json = await res.json();
+        setWeeklyLoans(json.weeklyLoans || []);
+        setThisWeekInstallments(json.thisWeekInstallments || []);
+        setTotalDueThisWeek(json.totalDueThisWeek || 0);
+        setTotalWeeklyRemaining(json.totalWeeklyRemaining || 0);
+        setTotalWeeklyPaid(json.totalWeeklyPaid || 0);
+        setActiveLendersCount(json.activeLendersCount || 0);
+      }
+    } catch (err) {
+      console.error("Failed to load weekly loans:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // Fetch Accounts for deposit / payment
   useEffect(() => {
-    fetchWeeklyPayments();
-    const handleDataChange = () => fetchWeeklyPayments();
-    window.addEventListener("finance_data_changed", handleDataChange);
-    return () => window.removeEventListener("finance_data_changed", handleDataChange);
-  }, [statusFilter, search]);
+    fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((accs) => {
+        if (Array.isArray(accs)) {
+          setAccounts(accs);
+          if (accs.length > 0) {
+            setSelectedDepositAccountId(accs[0].id);
+            setPayAccountId(accs[0].id);
+          }
+        }
+      })
+      .catch((err) => console.error(err));
+  }, []);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  useEffect(() => {
+    fetchWeeklyData();
+
+    const handleDataChanged = () => fetchWeeklyData();
+    window.addEventListener("finance_data_changed", handleDataChanged);
+    return () => window.removeEventListener("finance_data_changed", handleDataChanged);
+  }, [search, statusFilter]);
+
+  // Create new Weekly Loan
+  const handleCreateLoan = async (e: React.FormEvent) => {
     e.preventDefault();
-    const num = parseFloat(amount);
-    if (isNaN(num) || num <= 0 || !personCompany.trim()) return;
+    if (!personName.trim() || totalRepayNum <= 0 || weeklyInstNum <= 0) {
+      alert(isTe ? "దయచేసి అన్ని వివరాలను నమోదు చేయండి." : "Please fill in all required fields.");
+      return;
+    }
 
     setSubmitting(true);
     try {
-      const res = await fetch("/api/debts", {
+      const res = await fetch("/api/debts/weekly", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: paymentName.trim() || `Weekly Payment for ${personCompany.trim()}`,
-          partyName: personCompany.trim(),
-          type: "BORROWED",
-          frequency: "WEEKLY",
-          amount: num,
-          dueDate: dueDate || undefined,
+          partyName: personName.trim(),
+          disbursedAmount: disbursedNum > 0 ? disbursedNum : null,
+          originalAmount: totalRepayNum,
+          installmentAmount: weeklyInstNum,
+          totalInstallments: calculatedWeeks,
+          firstDueDate,
+          depositToAccountId: depositToAccount ? selectedDepositAccountId : null,
           paymentMethod,
           notes,
         }),
       });
 
       if (res.ok) {
-        setPaymentName("");
-        setPersonCompany("");
-        setAmount("");
-        setDueDate("");
+        setPersonName("");
+        setDisbursedAmount("");
+        setOriginalAmount("");
+        setInstallmentAmount("");
+        setDepositToAccount(false);
         setNotes("");
         setShowAddModal(false);
-        fetchWeeklyPayments();
+        fetchWeeklyData();
         window.dispatchEvent(new Event("finance_data_changed"));
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to add weekly payment");
+        alert(err.error || "Failed to create weekly loan");
       }
     } catch (err) {
       console.error(err);
+      alert("Network error");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleUpdate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editItem) return;
+  // Open Pay Installment Modal
+  const handleOpenPay = (inst: any) => {
+    setPayingInstallment(inst);
+    setPayAmount(inst.amount.toString());
+    setPayDate(new Date().toISOString().split("T")[0]);
+    setPayNotes("");
+  };
 
-    setSubmitting(true);
+  // Submit Mark as Paid
+  const handleConfirmPay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payingInstallment) return;
+
+    setPayingLoading(true);
     try {
-      const res = await fetch(`/api/debts/${editItem.id}`, {
-        method: "PUT",
+      const res = await fetch("/api/debts/installments/pay", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: editName,
-          partyName: editPerson,
-          originalAmount: editAmount ? parseFloat(editAmount) : undefined,
-          dueDate: editDueDate || null,
-          notes: editNotes,
+          installmentId: payingInstallment.id,
+          amountPaid: parseFloat(payAmount) || payingInstallment.amount,
+          accountId: payAccountId,
+          paymentDate: payDate,
+          paymentMethod: payMethod,
+          notes: payNotes,
         }),
       });
 
       if (res.ok) {
-        setEditItem(null);
-        fetchWeeklyPayments();
+        setPayingInstallment(null);
+        fetchWeeklyData();
         window.dispatchEvent(new Event("finance_data_changed"));
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to update record");
+        alert(err.error || "Failed to record payment");
       }
     } catch (err) {
       console.error(err);
+      alert("Network error");
     } finally {
-      setSubmitting(false);
+      setPayingLoading(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm(language === "te" ? "ఈ వారపు చెల్లింపును తొలగించాలనుకుంటున్నారా?" : "Are you sure you want to delete this weekly payment?")) return;
-    try {
-      const res = await fetch(`/api/debts/${id}`, { method: "DELETE" });
-      if (res.ok) {
-        fetchWeeklyPayments();
-        window.dispatchEvent(new Event("finance_data_changed"));
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  // Delete Loan
+  const handleDeleteLoan = async (id: string, name: string) => {
+    if (
+      !confirm(
+        isTe
+          ? `${name} యొక్క వారపు ఫైనాన్స్ రికార్డ్‌ను పూర్తిగా తొలగించాలనుకుంటున్నారా?`
+          : `Are you sure you want to delete the weekly loan for ${name}?`
+      )
+    )
+      return;
 
-  const handleGenerateNextWeek = async (item: any) => {
     try {
-      const res = await fetch("/api/debts/recurring", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ debtId: item.id }),
-      });
+      const res = await fetch(`/api/debts/weekly/${id}`, { method: "DELETE" });
       if (res.ok) {
-        alert(language === "te" ? "వచ్చే వారం చెల్లింపు రికార్డ్ విజయవంతంగా సృష్టించబడింది!" : "Next week's payment scheduled successfully!");
-        fetchWeeklyPayments();
+        fetchWeeklyData();
         window.dispatchEvent(new Event("finance_data_changed"));
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to generate next week's payment");
+        alert(err.error || "Failed to delete");
       }
     } catch (err) {
       console.error(err);
     }
   };
 
-  const totalWeeklyRemaining = payments
-    .filter((p) => p.status !== "SETTLED")
-    .reduce((sum, p) => sum + p.remainingAmount, 0);
-
-  const totalWeeklyPaid = payments.reduce((sum, p) => sum + (p.paidAmount || (p.originalAmount - p.remainingAmount)), 0);
-
-  const exportExcel = () => {
-    const isTe = language === "te";
-    const rows = payments.map((p) => ({
-      [isTe ? "చెల్లింపు పేరు" : "Payment Name"]: p.title || p.party?.name,
-      [isTe ? "వ్యక్తి / కంపెనీ" : "Person / Company"]: p.party?.name || "",
-      [isTe ? "మొత్తం విలువ (₹)" : "Total Amount"]: p.originalAmount,
-      [isTe ? "చెల్లించినది (₹)" : "Paid Amount"]: p.paidAmount || (p.originalAmount - p.remainingAmount),
-      [isTe ? "మిగిలినది (₹)" : "Remaining Amount"]: p.remainingAmount,
-      [isTe ? "గడువు తేదీ" : "Due Date"]: p.dueDate ? formatDate(p.dueDate) : "",
-      [isTe ? "స్థితి" : "Status"]: p.status,
+  // Export to Excel
+  const exportWeeklyExcel = () => {
+    const rows = weeklyLoans.map((l) => ({
+      [isTe ? "ఫైనాన్షియర్ / వ్యక్తి" : "Financier / Person"]: l.party?.name || "",
+      [isTe ? "స్వీకరించిన మొత్తం (₹)" : "Disbursed Amount (₹)"]: l.disbursedAmount || "N/A",
+      [isTe ? "చెల్లించాల్సిన మొత్తం (₹)" : "Total Repayment (₹)"]: l.originalAmount,
+      [isTe ? "వారపు వాయిదా (₹)" : "Weekly Installment (₹)"]: l.installmentAmount || "N/A",
+      [isTe ? "వారపు రోజు" : "Installment Day"]: l.installmentDay || "Monday",
+      [isTe ? "చెల్లించిన మొత్తం (₹)" : "Paid Amount (₹)"]: l.paidAmount,
+      [isTe ? "మిగిలిన బకాయి (₹)" : "Remaining Amount (₹)"]: l.remainingAmount,
+      [isTe ? "వాయిదాల సంఖ్య" : "Total Weeks"]: l.totalInstallments || "N/A",
+      [isTe ? "స్థితి" : "Status"]: l.status,
     }));
+
     const ws = XLSX.utils.json_to_sheet(rows);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Weekly_Payments");
-    XLSX.writeFile(wb, `Weekly_Payments_${new Date().toISOString().split("T")[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Weekly_Finance");
+    XLSX.writeFile(wb, `Weekly_Finance_${new Date().toISOString().split("T")[0]}.xlsx`);
   };
 
   return (
-    <div className="space-y-6 pb-12 animate-in fade-in duration-200">
-      {/* Header */}
+    <div className="space-y-6 pb-16 animate-in fade-in duration-200">
+      {/* 1. Header Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400">
-              <Calendar size={20} />
+            <div className="p-2.5 rounded-2xl bg-indigo-600 text-white font-bold shadow-sm">
+              <Calendar size={22} />
             </div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
-              {language === "te" ? "వారపు చెల్లింపులు (Weekly Payments)" : "Weekly Payments"}
-            </h1>
+            <div>
+              <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                {isTe ? "వారపు చెల్లింపులు & ఫైనాన్స్ (Weekly Payments)" : "Weekly Finance & Payments"}
+              </h1>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+                {isTe
+                  ? "వారపు రుణాలు (ఉదా: ₹9,500 తీసుకొని ₹12,000 వారానికి ₹1,000 చొప్పున చెల్లించేవి) మరియు ప్రతి వ్యక్తి వారపు వాయిదాల ట్రాకింగ్."
+                  : "Track weekly micro-finance loans (e.g. Received ₹9,500, pay ₹12,000 at ₹1,000/week) across multiple people with one-click Mark as Paid."}
+              </p>
+            </div>
           </div>
-          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-            {language === "te"
-              ? "ఉద్యోగుల వారపు జీతాలు, రెగ్యులర్ సప్లయర్లు మరియు వారపు ఖర్చుల చెల్లింపుల ట్రాకింగ్."
-              : "Manage recurring weekly employee salaries, supplier payments, and weekly obligations."}
-          </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={exportExcel}>
-            <Download size={14} />
-            <span>{language === "te" ? "ఎగుమతి (Excel)" : "Export Excel"}</span>
+          <Button variant="outline" size="sm" onClick={exportWeeklyExcel} className="text-xs font-bold">
+            <Download size={14} className="mr-1" />
+            <span>{isTe ? "ఎగుమతి" : "Export Excel"}</span>
           </Button>
-          <Button variant="emerald" size="sm" onClick={() => setShowAddModal(true)}>
-            <PlusCircle size={15} />
-            <span>{language === "te" ? "+ కొత్త వారపు చెల్లింపు" : "+ Add Weekly Payment"}</span>
+
+          <Button
+            onClick={() => setShowAddModal(true)}
+            size="sm"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-sm"
+          >
+            <PlusCircle size={15} className="mr-1.5" />
+            <span>{isTe ? "+ కొత్త వారపు ఫైనాన్స్ / లోన్" : "+ Add Weekly Loan / Payment"}</span>
           </Button>
         </div>
       </div>
 
-      {/* KPI Highlight Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-indigo-50/40 dark:bg-indigo-950/20 border-indigo-200/80 dark:border-indigo-900/60">
-          <CardHeader className="pb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-indigo-800 dark:text-indigo-400">
-              {language === "te" ? "వారపు మిగిలిన బకాయి" : "Total Pending This Week"}
+      {/* 2. Top Summary KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Due This Week */}
+        <Card className="bg-gradient-to-br from-amber-50 to-orange-50/50 dark:from-amber-950/30 dark:to-orange-950/10 border-amber-200 dark:border-amber-900/60 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-800 dark:text-amber-400">
+              {isTe ? "ఈ వారం చెల్లించాల్సిన మొత్తం" : "Due This Week"}
             </span>
+            <div className="p-2 rounded-xl bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300">
+              <Clock size={18} />
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-black text-indigo-700 dark:text-indigo-400">
-              {formatCurrency(totalWeeklyRemaining)}
-            </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              {payments.filter((p) => p.status !== "SETTLED").length}{" "}
-              {language === "te" ? "క్రియాశీల చెల్లింపులు" : "active weekly dues"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200/80 dark:border-emerald-900/60">
-          <CardHeader className="pb-1">
-            <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-400">
-              {language === "te" ? "ఇప్పటికే చెల్లించిన మొత్తం" : "Total Paid Amount"}
+            <span className="text-2xl sm:text-3xl font-black text-amber-700 dark:text-amber-400 tracking-tight block">
+              {formatCurrency(totalDueThisWeek)}
             </span>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-black text-emerald-700 dark:text-emerald-400">
-              {formatCurrency(totalWeeklyPaid)}
-            </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-              {payments.filter((p) => p.status === "SETTLED").length}{" "}
-              {language === "te" ? "పూర్తయిన చెల్లింపులు" : "fully completed"}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filters & Search Toolbar */}
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold text-slate-400 mr-1 flex items-center gap-1">
-              <Filter size={13} />
-              {t("debts.status")}:
-            </span>
-            {[
-              { id: "all", label: t("common.all") },
-              { id: "PENDING", label: language === "te" ? "పెండింగ్" : "Pending" },
-              { id: "PARTIALLY_PAID", label: language === "te" ? "కొంత చెల్లించినవి" : "Partially Paid" },
-              { id: "OVERDUE", label: language === "te" ? "గడువు ముగిసినవి" : "Overdue" },
-              { id: "SETTLED", label: language === "te" ? "పూర్తయినవి (Paid)" : "Paid" },
-            ].map((st) => (
+            <div className="flex items-center justify-between mt-1.5 text-[11px] text-amber-800/80 dark:text-amber-400/80 font-medium">
+              <span>
+                {thisWeekInstallments.length} {isTe ? "వాయిదాలు బకాయి ఉన్నాయి" : "installments due / overdue"}
+              </span>
               <button
-                key={st.id}
-                onClick={() => setStatusFilter(st.id)}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  statusFilter === st.id
-                    ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-xs"
-                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200"
-                }`}
+                onClick={() => setActiveTab("this_week")}
+                className="font-bold underline hover:text-amber-900 cursor-pointer"
               >
-                {st.label}
+                {isTe ? "చూడండి" : "View"} &rarr;
               </button>
-            ))}
-          </div>
-
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <div className="relative w-full sm:w-80">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder={language === "te" ? "చెల్లింపు పేరు లేదా వ్యక్తి ద్వారా వెతకండి..." : "Search payment or recipient..."}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
-              />
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      {/* Payments List */}
-      <div className="space-y-3.5">
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="inline-block h-8 w-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : payments.length > 0 ? (
-          payments.map((item) => {
-            const isSettled = item.status === "SETTLED";
-            const isOverdue = item.status === "OVERDUE";
-            const isPartial = item.status === "PARTIALLY_PAID";
-            const paid = item.paidAmount || (item.originalAmount - item.remainingAmount);
+        {/* Card 2: Total Weekly Remaining */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              {isTe ? "మొత్తం మిగిలిన బకాయి" : "Total Remaining Debt"}
+            </span>
+            <div className="p-2 rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-400">
+              <TrendingDown size={18} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <span className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white tracking-tight block">
+              {formatCurrency(totalWeeklyRemaining)}
+            </span>
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              {isTe ? "అన్ని వారపు లోన్లలో మిగిలిన మొత్తం" : "Across all active weekly agreements"}
+            </p>
+          </CardContent>
+        </Card>
 
-            return (
-              <Card key={item.id} className="overflow-hidden">
-                <div className="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  {/* Left Info */}
-                  <div className="flex items-start gap-3.5">
-                    <div className="p-3 rounded-2xl bg-indigo-600 text-white font-bold shrink-0">
-                      <Calendar size={20} />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                          {item.title || item.party?.name}
-                        </h3>
-                        <Badge
-                          variant={
-                            isSettled
-                              ? "success"
-                              : isOverdue
-                              ? "danger"
-                              : isPartial
-                              ? "info"
-                              : "warning"
-                          }
-                        >
-                          {isSettled
-                            ? language === "te" ? "చెల్లించబడింది" : "Paid"
-                            : isOverdue
-                            ? language === "te" ? "గడువు ముగిసింది" : "Overdue"
-                            : isPartial
-                            ? language === "te" ? "కొంత చెల్లించారు" : "Partially Paid"
-                            : language === "te" ? "పెండింగ్" : "Pending"}
-                        </Badge>
-                      </div>
+        {/* Card 3: Total Paid So Far */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              {isTe ? "ఇప్పటివరకు చెల్లించినది" : "Total Paid Amount"}
+            </span>
+            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400">
+              <CheckCircle2 size={18} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <span className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400 tracking-tight block">
+              {formatCurrency(totalWeeklyPaid)}
+            </span>
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              {isTe ? "వాస్తవంగా చెల్లించిన వాయిదాలు" : "Completed weekly payments"}
+            </p>
+          </CardContent>
+        </Card>
 
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        <span>
-                          {language === "te" ? "వ్యక్తి / కంపెనీ:" : "Recipient:"}{" "}
-                          <strong className="text-slate-700 dark:text-slate-200">{item.party?.name}</strong>
-                        </span>
-                        {item.dueDate && (
-                          <span className="flex items-center gap-1">
-                            <Clock size={12} />
-                            {formatDate(item.dueDate)}
-                          </span>
-                        )}
-                        {item.notes && <span className="italic">"{item.notes}"</span>}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right Financial Amounts & Actions */}
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4 text-right">
-                    <div>
-                      <span className="text-[11px] text-slate-400 block">
-                        {language === "te" ? "మొత్తం / మిగిలినది" : "Total / Remaining"}
-                      </span>
-                      <div className="flex items-center justify-end gap-1.5">
-                        <span className="text-xs text-slate-400 line-through">
-                          {formatCurrency(item.originalAmount)}
-                        </span>
-                        <span className="text-lg font-black text-slate-900 dark:text-white">
-                          {formatCurrency(item.remainingAmount)}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">
-                        {language === "te" ? "చెల్లించినది: " : "Paid: "}
-                        {formatCurrency(paid)}
-                      </span>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1.5 self-end sm:self-center">
-                      {!isSettled ? (
-                        <button
-                          onClick={() => setSelectedForSettle(item)}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-xs flex items-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <CheckCircle2 size={13} />
-                          <span>{language === "te" ? "చెల్లించండి" : "Mark as Paid"}</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleGenerateNextWeek(item)}
-                          title="Generate Next Week's Payment"
-                          className="px-3 py-1.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 font-bold text-xs border border-indigo-200 dark:border-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <RefreshCw size={13} />
-                          <span>{language === "te" ? "+ వచ్చే వారం" : "+ Next Week"}</span>
-                        </button>
-                      )}
-
-                      <button
-                        onClick={() => setDetailItem(item)}
-                        title="View Details & History"
-                        className="p-2 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
-                      >
-                        <Eye size={15} />
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setEditItem(item);
-                          setEditName(item.title || "");
-                          setEditPerson(item.party?.name || "");
-                          setEditAmount(item.originalAmount.toString());
-                          setEditDueDate(item.dueDate ? item.dueDate.split("T")[0] : "");
-                          setEditNotes(item.notes || "");
-                        }}
-                        title="Edit Record"
-                        className="p-2 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/60 transition-colors cursor-pointer"
-                      >
-                        <Edit size={15} />
-                      </button>
-
-                      <button
-                        onClick={() => handleDelete(item.id)}
-                        title="Delete Record"
-                        className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors cursor-pointer"
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            );
-          })
-        ) : (
-          <Card className="text-center py-12">
-            <CardContent>
-              <div className="h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400 mb-3">
-                <Calendar size={24} />
-              </div>
-              <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                {language === "te" ? "ఎలాంటి వారపు చెల్లింపులు లేవు" : "No weekly payments recorded"}
-              </h3>
-              <p className="text-xs text-slate-400 mt-1 mb-4">
-                {language === "te"
-                  ? "మీ ఉద్యోగుల జీతాలు లేదా వారపు ఖర్చులను ట్రాక్ చేయడానికి ఇప్పుడే నమోదు చేయండి."
-                  : "Add recurring weekly expenses, wages, or vendor payments to stay on track."}
-              </p>
-              <Button variant="emerald" size="sm" onClick={() => setShowAddModal(true)}>
-                <PlusCircle size={14} />
-                <span>{language === "te" ? "+ కొత్త వారపు చెల్లింపు" : "+ Add Weekly Payment"}</span>
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+        {/* Card 4: Active Lenders */}
+        <Card className="border-slate-200 dark:border-slate-800 shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              {isTe ? "క్రియాశీల ఫైనాన్షియర్లు" : "Active Lenders / People"}
+            </span>
+            <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 dark:bg-indigo-950/60 dark:text-indigo-400">
+              <Users size={18} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <span className="text-2xl sm:text-3xl font-black text-indigo-600 dark:text-indigo-400 tracking-tight block">
+              {activeLendersCount}
+            </span>
+            <p className="text-[11px] text-slate-400 mt-1.5">
+              {weeklyLoans.length} {isTe ? "మొత్తం వారపు లోన్లు నమోదు" : "total weekly loan records"}
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Add Weekly Payment Modal */}
+      {/* 3. Navigation Tabs: "This Week's Schedule" vs "All Lenders & Loans" */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setActiveTab("this_week")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "this_week"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
+            }`}
+          >
+            <Calendar size={15} />
+            <span>{isTe ? "ఈ వారం చెల్లింపుల షెడ్యూల్" : "This Week's Schedule"}</span>
+            {thisWeekInstallments.length > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-amber-400 text-slate-900">
+                {thisWeekInstallments.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab("all_loans")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "all_loans"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800"
+            }`}
+          >
+            <Users size={15} />
+            <span>{isTe ? "వ్యక్తుల వారీగా లోన్లు (All Lenders)" : "All Lenders & Loans"}</span>
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+              {weeklyLoans.length}
+            </span>
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="relative w-full sm:w-72">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            placeholder={isTe ? "వ్యక్తి లేదా లోన్ ద్వారా వెతకండి..." : "Search lender or loan..."}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-hidden"
+          />
+        </div>
+      </div>
+
+      {/* 4. TAB 1: THIS WEEK'S INSTALLMENTS (Organized by Day with 1-Click Mark as Paid) */}
+      {activeTab === "this_week" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+              <Clock size={16} className="text-amber-500" />
+              <span>
+                {isTe
+                  ? "ఈ వారం చెల్లించాల్సిన వాయిదాలు (వివిధ వ్యక్తులకు)"
+                  : "Payments to Make This Week (Across Multiple People)"}
+              </span>
+            </h2>
+            <span className="text-xs text-slate-400 font-medium">
+              {isTe ? "ప్రతి వారం నిర్ణీత రోజున చెల్లించాల్సిన మొత్తం" : "Fixed day weekly installments"}
+            </span>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-16">
+              <div className="inline-block h-8 w-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : thisWeekInstallments.length === 0 ? (
+            <Card className="text-center py-12 border-dashed border-slate-200 dark:border-slate-800">
+              <CardContent className="space-y-2">
+                <div className="h-12 w-12 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto">
+                  <CheckCircle2 size={24} />
+                </div>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  {isTe ? "ఈ వారం ఎలాంటి పెండింగ్ చెల్లింపులు లేవు! 🎉" : "All weekly payments for this week are cleared! 🎉"}
+                </h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  {isTe
+                    ? "మీరు ఈ వారంలో చెల్లించాల్సిన అన్ని వాయిదాలు పూర్తయ్యాయి లేదా కొత్త వాయిదాలు షెడ్యూల్ కాలేదు."
+                    : "You have no outstanding weekly payments due this week. Click '+ Add Weekly Loan' to register a new agreement."}
+                </p>
+                <div className="pt-2">
+                  <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-indigo-600 text-white text-xs">
+                    <PlusCircle size={14} className="mr-1" />
+                    {isTe ? "+ కొత్త వారపు లోన్ జోడించండి" : "+ Add Weekly Loan"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {thisWeekInstallments.map((inst) => {
+                const isOverdue = inst.isPastDue;
+                const dueDateObj = new Date(inst.dueDate);
+                const dayName = dueDateObj.toLocaleDateString(language === "te" ? "te-IN" : "en-US", {
+                  weekday: "long",
+                });
+
+                return (
+                  <Card
+                    key={inst.id}
+                    className={`overflow-hidden transition-all hover:border-indigo-300 dark:hover:border-indigo-700 shadow-xs ${
+                      isOverdue
+                        ? "border-l-4 border-l-rose-500 bg-rose-50/20 dark:bg-rose-950/10"
+                        : "border-l-4 border-l-amber-500 bg-white dark:bg-slate-900"
+                    }`}
+                  >
+                    <div className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      {/* Left: Day & Person info */}
+                      <div className="flex items-start gap-3.5">
+                        <div
+                          className={`p-3 rounded-2xl font-bold shrink-0 text-center min-w-[65px] ${
+                            isOverdue
+                              ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300"
+                              : "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+                          }`}
+                        >
+                          <span className="text-[10px] uppercase block font-black leading-none mb-1">
+                            {dayName.slice(0, 3)}
+                          </span>
+                          <span className="text-base font-black leading-none block">
+                            {dueDateObj.getDate()}
+                          </span>
+                        </div>
+
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                              {inst.lenderName}
+                            </h3>
+                            <Badge variant={isOverdue ? "danger" : "warning"}>
+                              {isOverdue
+                                ? isTe ? "గడువు ముగిసింది" : "Overdue"
+                                : isTe ? "ఈ వారం చెల్లించాలి" : "Due This Week"}
+                            </Badge>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1">
+                            <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                              {isTe ? "వాయిదా సంఖ్య: " : "Week: "}
+                              {inst.installmentNumber} / {inst.totalInstallments}
+                            </span>
+                            <span>•</span>
+                            <span>
+                              {isTe ? "గడువు తేదీ: " : "Due: "}
+                              <strong>{formatDate(inst.dueDate)} ({dayName})</strong>
+                            </span>
+                            {inst.disbursedAmount && (
+                              <>
+                                <span>•</span>
+                                <span>
+                                  {isTe ? "తీసుకున్నది: " : "Disbursed: "}
+                                  {formatCurrency(inst.disbursedAmount)}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Amount & Action */}
+                      <div className="flex items-center justify-between sm:justify-end gap-5 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
+                        <div className="text-left sm:text-right">
+                          <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                            {isTe ? "ఈ వారం చెల్లించాల్సినది" : "Amount to Pay"}
+                          </span>
+                          <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight">
+                            {formatCurrency(inst.amount)}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block">
+                            {isTe ? "మొత్తం మిగిలిన అప్పు: " : "Remaining balance: "}
+                            {formatCurrency(inst.debtRemainingAmount)}
+                          </span>
+                        </div>
+
+                        {/* Direct Mark as Paid Button */}
+                        <Button
+                          onClick={() => handleOpenPay(inst)}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3.5 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                        >
+                          <CheckCircle2 size={15} />
+                          <span>{isTe ? "చెల్లించినట్లు గుర్తించండి" : "Mark as Paid"}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 5. TAB 2: ALL LENDERS / LOANS (Card per Person with Complete 12-Week Schedule) */}
+      {activeTab === "all_loans" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+              <Users size={16} className="text-indigo-600" />
+              <span>
+                {isTe ? "వ్యక్తుల వారీగా పూర్తి వారపు లోన్ల వివరాలు" : "All Weekly Agreements by Person"}
+              </span>
+            </h2>
+          </div>
+
+          {loading ? (
+            <div className="text-center py-16">
+              <div className="inline-block h-8 w-8 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : weeklyLoans.length === 0 ? (
+            <Card className="text-center py-12">
+              <CardContent>
+                <div className="h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400 mb-3">
+                  <Calendar size={24} />
+                </div>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  {isTe ? "ఎలాంటి వారపు లోన్లు నమోదు కాలేదు" : "No weekly loans recorded"}
+                </h3>
+                <p className="text-xs text-slate-400 mt-1 mb-4">
+                  {isTe
+                    ? "మీరు తీసుకున్న ఫైనాన్స్ (ఉదా: ₹9,500 తీసుకొని ₹12,000 చెల్లించేవి) ఇక్కడ నమోదు చేయండి."
+                    : "Add your weekly loans and financiers to automatically track all installments."}
+                </p>
+                <Button size="sm" onClick={() => setShowAddModal(true)} className="bg-indigo-600 text-white text-xs">
+                  <PlusCircle size={14} className="mr-1" />
+                  {isTe ? "+ కొత్త వారపు లోన్ జోడించండి" : "+ Add Weekly Loan"}
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {weeklyLoans.map((loan) => {
+                const isExpanded = expandedLoanId === loan.id;
+                const isSettled = loan.status === "SETTLED" || loan.remainingAmount <= 0;
+                const installments = loan.installments || [];
+                const paidCount = installments.filter((i: any) => i.status === "PAID" || i.status === "SETTLED").length;
+                const totalCount = installments.length || loan.totalInstallments || 1;
+                const pct = Math.round((paidCount / totalCount) * 100);
+
+                // Find next unpaid installment
+                const nextDueInst = installments.find(
+                  (i: any) => i.status !== "PAID" && i.status !== "SETTLED"
+                );
+
+                return (
+                  <Card key={loan.id} className="overflow-hidden border-slate-200 dark:border-slate-800 shadow-sm">
+                    {/* Top Loan Summary Header */}
+                    <div className="p-5 bg-white dark:bg-slate-900">
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                        <div className="flex items-start gap-3.5">
+                          <div className="p-3 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 font-bold shrink-0">
+                            <Users size={22} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-base font-black text-slate-900 dark:text-white">
+                                {loan.party?.name}
+                              </h3>
+                              <Badge variant={isSettled ? "success" : "info"}>
+                                {isSettled
+                                  ? isTe ? "పూర్తయింది (Paid)" : "Completed"
+                                  : isTe ? "నడుస్తోంది (Active)" : "Active Loan"}
+                              </Badge>
+                              {loan.installmentDay && (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                  {isTe ? `ప్రతి ${loan.installmentDay}` : `Every ${loan.installmentDay}`}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                              {loan.notes || loan.title}
+                            </p>
+
+                            {/* Terms Overview */}
+                            <div className="flex flex-wrap items-center gap-4 text-xs mt-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                              {loan.disbursedAmount && (
+                                <span>
+                                  {isTe ? "స్వీకరించినది: " : "Disbursed: "}
+                                  <strong className="text-emerald-600 dark:text-emerald-400 font-black">
+                                    {formatCurrency(loan.disbursedAmount)}
+                                  </strong>
+                                </span>
+                              )}
+                              <span>
+                                {isTe ? "మొత్తం తిరిగి చెల్లించాల్సినది: " : "Total to Repay: "}
+                                <strong className="text-slate-900 dark:text-white font-black">
+                                  {formatCurrency(loan.originalAmount)}
+                                </strong>
+                              </span>
+                              <span>
+                                {isTe ? "వారపు వాయిదా: " : "Weekly Installment: "}
+                                <strong className="text-indigo-600 dark:text-indigo-400 font-black">
+                                  {formatCurrency(loan.installmentAmount || 0)}
+                                </strong>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Financial Progress & Actions */}
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-4 lg:self-center">
+                          <div className="text-left lg:text-right min-w-[140px]">
+                            <div className="flex items-center justify-between lg:justify-end gap-2">
+                              <span className="text-xs text-slate-400 font-semibold">
+                                {paidCount} / {totalCount} {isTe ? "వారాలు చెల్లించారు" : "weeks paid"}
+                              </span>
+                              <span className="text-xs font-black text-indigo-600 dark:text-indigo-400">
+                                {pct}%
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-full h-2 mt-1.5 overflow-hidden">
+                              <div
+                                className="bg-indigo-600 h-full rounded-full transition-all duration-300"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between lg:justify-end gap-2 text-[11px] mt-1 text-slate-500">
+                              <span>
+                                {isTe ? "మిగిలినది: " : "Left: "}
+                                <strong className="text-rose-600 dark:text-rose-400">
+                                  {formatCurrency(loan.remainingAmount)}
+                                </strong>
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center">
+                            {nextDueInst && (
+                              <Button
+                                size="sm"
+                                onClick={() => handleOpenPay(nextDueInst)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs"
+                              >
+                                <CheckCircle2 size={14} className="mr-1" />
+                                {isTe
+                                  ? `వారం ${nextDueInst.installmentNumber} చెల్లించండి`
+                                  : `Pay Week ${nextDueInst.installmentNumber}`}
+                              </Button>
+                            )}
+
+                            <button
+                              onClick={() => setExpandedLoanId(isExpanded ? null : loan.id)}
+                              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>{isTe ? "వారాల షెడ్యూల్" : "Schedule"}</span>
+                              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteLoan(loan.id, loan.party?.name || "")}
+                              title="Delete Record"
+                              className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60 transition-colors cursor-pointer"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* EXPANDED VIEW: Complete Week-by-Week Installment Table */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 p-4 sm:p-5">
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                            {isTe
+                              ? `${loan.party?.name} యొక్క పూర్తి ${installments.length} వారాల వాయిదాల జాబితా`
+                              : `Full ${installments.length}-Week Schedule for ${loan.party?.name}`}
+                          </h4>
+                          <span className="text-[11px] text-slate-400 font-medium">
+                            {isTe ? "ప్రతి వారం వాయిదా చెల్లించినప్పుడు 'Mark as Paid' నొక్కండి" : "Click 'Mark as Paid' as you clear each week"}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+                          {installments.map((inst: any) => {
+                            const isPaid = inst.status === "PAID" || inst.status === "SETTLED";
+                            const d = new Date(inst.dueDate);
+                            const isPast = !isPaid && d < new Date();
+
+                            return (
+                              <div
+                                key={inst.id}
+                                className={`p-3 rounded-xl border text-xs transition-all ${
+                                  isPaid
+                                    ? "bg-emerald-50/60 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900/60 text-emerald-900 dark:text-emerald-100"
+                                    : isPast
+                                    ? "bg-rose-50/60 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900/60 text-rose-900 dark:text-rose-100"
+                                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between mb-1.5">
+                                  <span className="font-bold">
+                                    {isTe ? `వారం ${inst.installmentNumber}` : `Week ${inst.installmentNumber}`}
+                                  </span>
+                                  {isPaid ? (
+                                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900 px-1.5 py-0.5 rounded-full">
+                                      <Check size={10} /> Paid
+                                    </span>
+                                  ) : isPast ? (
+                                    <span className="text-[10px] font-bold text-rose-600 dark:text-rose-400 bg-rose-100 dark:bg-rose-900 px-1.5 py-0.5 rounded-full">
+                                      Overdue
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900 px-1.5 py-0.5 rounded-full">
+                                      Pending
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex items-baseline justify-between mb-2">
+                                  <span className="text-sm font-black">
+                                    {formatCurrency(inst.amount)}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400">
+                                    {formatDate(inst.dueDate)}
+                                  </span>
+                                </div>
+
+                                {!isPaid ? (
+                                  <button
+                                    onClick={() => handleOpenPay(inst)}
+                                    className="w-full py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1"
+                                  >
+                                    <CheckCircle2 size={11} />
+                                    <span>{isTe ? "చెల్లించండి" : "Mark as Paid"}</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400 block text-center font-medium">
+                                    {inst.paidDate ? formatDate(inst.paidDate) : "Completed"}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 6. MODAL: ADD WEEKLY LOAN / AGREEMENT */}
       {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 dark:border-slate-800 p-6 space-y-4 animate-in fade-in zoom-in-95">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-lg border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Calendar size={16} className="text-indigo-600 dark:text-indigo-400" />
-                {language === "te" ? "వారపు చెల్లింపు నమోదు" : "Add Weekly Payment"}
-              </h3>
-              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400">
+                  <Calendar size={18} />
+                </div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  {isTe ? "కొత్త వారపు ఫైనాన్స్ / లోన్ నమోదు" : "Add Weekly Loan Agreement"}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowAddModal(false)}
+                className="text-slate-400 hover:text-slate-600 text-lg cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleCreate} className="space-y-3.5 text-xs">
+            <form onSubmit={handleCreateLoan} className="space-y-4 text-xs">
+              {/* Financier / Person Name */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "చెల్లింపు పేరు *" : "Payment Name *"}
+                  {isTe ? "ఫైనాన్షియర్ / వ్యక్తి పేరు *" : "Lender / Financier Name *"}
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Worker Ramesh Wages, Supplier A"
-                  value={paymentName}
-                  onChange={(e) => setPaymentName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  placeholder="e.g. Mastan, Ramesh Finance, Suresh"
+                  value={personName}
+                  onChange={(e) => setPersonName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "వ్యక్తి లేదా కంపెనీ పేరు *" : "Person / Company Name *"}
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Ramesh, Mastan, Supplier"
-                  value={personCompany}
-                  onChange={(e) => setPersonCompany(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              {/* Disbursed Amount (Giving) vs Total Amount (Pay back) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {language === "te" ? "వారపు మొత్తం (₹) *" : "Total Amount (₹) *"}
+                    {isTe ? "వారు ఇచ్చిన అసలు మొత్తం (₹)" : "Amount Given / Received (₹)"}
                   </label>
                   <input
                     type="number"
-                    step="0.01"
-                    min="1"
-                    required
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
+                    step="any"
+                    placeholder="e.g. 9500"
+                    value={disbursedAmount}
+                    onChange={(e) => setDisbursedAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                   />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {isTe ? "ఉదా: చేతికి ఇచ్చిన ₹9,500" : "Disbursed amount you received"}
+                  </span>
                 </div>
 
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {language === "te" ? "గడువు తేదీ *" : "Due Date *"}
+                    {isTe ? "మొత్తం తిరిగి చెల్లించాల్సినది (₹) *" : "Total Amount to Repay (₹) *"}
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="e.g. 12000"
+                    value={originalAmount}
+                    onChange={(e) => setOriginalAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {isTe ? "ఉదా: మొత్తం కట్టాల్సిన ₹12,000" : "Total agreement repayment amount"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Weekly Installment & First Due Date */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isTe ? "ప్రతి వారం చెల్లించాల్సిన వాయిదా (₹) *" : "Weekly Installment Amount (₹) *"}
+                  </label>
+                  <input
+                    type="number"
+                    step="any"
+                    required
+                    placeholder="e.g. 1000"
+                    value={installmentAmount}
+                    onChange={(e) => setInstallmentAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    {isTe ? "ఉదా: వారానికి ₹1,000" : "Per week fixed payment"}
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isTe ? "మొదటి వాయిదా తేదీ *" : "First Payment Date *"}
                   </label>
                   <input
                     type="date"
                     required
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    value={firstDueDate}
+                    onChange={(e) => setFirstDueDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                   />
+                  <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold block mt-0.5">
+                    {isTe ? `ప్రతి ${calculatedDay}` : `Repeats every ${calculatedDay}`}
+                  </span>
                 </div>
               </div>
 
-              <div>
-                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "చెల్లింపు విధానం" : "Preferred Payment Method"}
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                >
-                  <option value="UPI">UPI</option>
-                  <option value="CASH">Cash</option>
-                  <option value="BANK_TRANSFER">Bank Transfer</option>
-                  <option value="CHEQUE">Cheque</option>
-                </select>
-              </div>
+              {/* Dynamic Calculation Info Box */}
+              {totalRepayNum > 0 && weeklyInstNum > 0 && (
+                <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/60 space-y-1.5">
+                  <div className="flex items-center justify-between font-bold text-indigo-900 dark:text-indigo-200">
+                    <span>{isTe ? "స్వయంచాలక గణన:" : "Auto-Generated Schedule Preview:"}</span>
+                    <Badge className="bg-indigo-600 text-white font-black text-[10px]">
+                      {calculatedWeeks} {isTe ? "వారాలు" : "Weeks"}
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-indigo-800 dark:text-indigo-300">
+                    {isTe
+                      ? `ప్రతి ${calculatedDay}న ₹${weeklyInstNum.toLocaleString("en-IN")} చొప్పున ${calculatedWeeks} వారాల పాటు చెల్లింపు షెడ్యూల్ సృష్టించబడుతుంది.`
+                      : `A complete ${calculatedWeeks}-week schedule will be generated at ₹${weeklyInstNum.toLocaleString("en-IN")}/week, repeating every ${calculatedDay}.`}
+                  </p>
+                  {disbursedNum > 0 && (
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400 pt-1 border-t border-indigo-200/50 dark:border-indigo-800/50 flex justify-between">
+                      <span>{isTe ? "అదనపు వడ్డీ / ఛార్జీ:" : "Interest / Finance Charge:"}</span>
+                      <strong className="text-slate-800 dark:text-slate-200">
+                        {formatCurrency(totalRepayNum - disbursedNum)}
+                      </strong>
+                    </div>
+                  )}
+                </div>
+              )}
 
+              {/* Deposit to Account Option */}
+              {disbursedNum > 0 && (
+                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={depositToAccount}
+                      onChange={(e) => setDepositToAccount(e.target.checked)}
+                      className="rounded text-indigo-600"
+                    />
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      {isTe
+                        ? `తీసుకున్న ₹${disbursedNum.toLocaleString("en-IN")} నా ఖాతాలో జత చేయండి`
+                        : `Add disbursed ₹${disbursedNum.toLocaleString("en-IN")} into my Account balance`}
+                    </span>
+                  </label>
+
+                  {depositToAccount && (
+                    <div>
+                      <span className="text-[10px] text-slate-400 block mb-1">
+                        {isTe ? "జమ చేయవలసిన ఖాతా:" : "Select Account to credit:"}
+                      </span>
+                      <select
+                        value={selectedDepositAccountId}
+                        onChange={(e) => setSelectedDepositAccountId(e.target.value)}
+                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs"
+                      >
+                        {accounts.map((acc) => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.name} ({formatCurrency(acc.currentBalance)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Notes */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "వివరాలు / నోట్స్" : "Description / Notes"}
+                  {isTe ? "గమనికలు / ఇతర వివరాలు" : "Notes / Remarks"}
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Weekly Saturday settlement"
+                  placeholder="e.g. Finance broker Ramesh, Weekly payment agreement"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowAddModal(false)}>
-                  {t("common.cancel")}
+              {/* Submit Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowAddModal(false)}
+                >
+                  {isTe ? "రద్దు" : "Cancel"}
                 </Button>
-                <Button type="submit" variant="emerald" size="sm" disabled={submitting}>
-                  {submitting ? t("common.loading") : language === "te" ? "సేవ్ చేయండి" : "Save Weekly Payment"}
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={submitting}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold"
+                >
+                  {submitting ? (isTe ? "నమోదు అవుతోంది..." : "Saving...") : isTe ? "షెడ్యూల్ సృష్టించండి" : "Create Agreement"}
                 </Button>
               </div>
             </form>
@@ -609,172 +1072,142 @@ export default function WeeklyPaymentsPage() {
         </div>
       )}
 
-      {/* Edit Modal */}
-      {editItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-md border border-slate-200 dark:border-slate-800 p-6 space-y-4 animate-in fade-in zoom-in-95">
+      {/* 7. MODAL: MARK INSTALLMENT AS PAID */}
+      {payingInstallment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                {language === "te" ? "వారపు చెల్లింపు సవరణ" : "Edit Weekly Payment"}
-              </h3>
-              <button onClick={() => setEditItem(null)} className="text-slate-400 hover:text-slate-600">✕</button>
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {isTe ? "వాయిదా చెల్లించినట్లు నమోదు" : "Mark Installment as Paid"}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {payingInstallment.lenderName || "Weekly Payment"} • Week {payingInstallment.installmentNumber} of {payingInstallment.totalInstallments}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setPayingInstallment(null)}
+                className="text-slate-400 hover:text-slate-600 text-lg cursor-pointer"
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleUpdate} className="space-y-3.5 text-xs">
+            <form onSubmit={handleConfirmPay} className="space-y-3.5 text-xs">
+              {/* Amount to pay */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "చెల్లింపు పేరు *" : "Payment Name *"}
+                  {isTe ? "చెల్లిస్తున్న మొత్తం (₹) *" : "Amount Paying Now (₹) *"}
                 </label>
                 <input
-                  type="text"
+                  type="number"
+                  step="any"
                   required
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-black text-sm"
                 />
               </div>
 
+              {/* Deduct from Account */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "వ్యక్తి లేదా కంపెనీ *" : "Person / Company *"}
+                  {isTe ? "చెల్లించిన ఖాతా *" : "Pay from Account *"}
                 </label>
-                <input
-                  type="text"
+                <select
                   required
-                  value={editPerson}
-                  onChange={(e) => setEditPerson(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                />
+                  value={payAccountId}
+                  onChange={(e) => setPayAccountId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  {accounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name} ({formatCurrency(acc.currentBalance)})
+                    </option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  {isTe
+                    ? "ఈ మొత్తం ఎంచుకున్న ఖాతా నుండి స్వయంచాలకంగా తీసివేయబడుతుంది."
+                    : "This amount will be deducted from this account balance."}
+                </span>
               </div>
 
+              {/* Payment Method & Date */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {language === "te" ? "మొత్తం విలువ (₹)" : "Total Amount (₹)"}
+                    {isTe ? "చెల్లింపు విధానం" : "Payment Method"}
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
-                  />
+                  <select
+                    value={payMethod}
+                    onChange={(e) => setPayMethod(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  >
+                    <option value="UPI">UPI / PhonePe / GPay</option>
+                    <option value="CASH">Cash in Hand</option>
+                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                  </select>
                 </div>
 
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    {language === "te" ? "గడువు తేదీ" : "Due Date"}
+                    {isTe ? "చెల్లించిన తేదీ" : "Payment Date"}
                   </label>
                   <input
                     type="date"
-                    value={editDueDate}
-                    onChange={(e) => setEditDueDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                    value={payDate}
+                    onChange={(e) => setPayDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
                   />
                 </div>
               </div>
 
+              {/* Notes */}
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {language === "te" ? "వివరాలు" : "Notes"}
+                  {isTe ? "గమనికలు" : "Notes (Optional)"}
                 </label>
                 <input
                   type="text"
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  placeholder="e.g. Paid in cash to Mastan"
+                  value={payNotes}
+                  onChange={(e) => setPayNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-                <Button type="button" variant="outline" size="sm" onClick={() => setEditItem(null)}>
-                  {t("common.cancel")}
+              {/* Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPayingInstallment(null)}
+                >
+                  {isTe ? "రద్దు" : "Cancel"}
                 </Button>
-                <Button type="submit" variant="emerald" size="sm" disabled={submitting}>
-                  {submitting ? t("common.loading") : language === "te" ? "నవీకరించండి" : "Update Payment"}
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={payingLoading}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                >
+                  {payingLoading
+                    ? isTe ? "చెల్లింపు నమోదు అవుతోంది..." : "Recording..."
+                    : isTe ? "చెల్లించినట్లు నిర్ధారించండి" : "Confirm Payment"}
                 </Button>
               </div>
             </form>
           </div>
         </div>
-      )}
-
-      {/* Details & Settlements History Modal */}
-      {detailItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-xl w-full max-w-lg border border-slate-200 dark:border-slate-800 p-6 space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <History size={16} className="text-indigo-600" />
-                {detailItem.title || detailItem.party?.name}
-              </h3>
-              <button onClick={() => setDetailItem(null)} className="text-slate-400 hover:text-slate-600">✕</button>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-xs">
-              <div>
-                <span className="text-slate-400 block">{language === "te" ? "మొత్తం:" : "Total:"}</span>
-                <span className="font-extrabold text-slate-800 dark:text-white">{formatCurrency(detailItem.originalAmount)}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block">{language === "te" ? "చెల్లించినది:" : "Paid:"}</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                  {formatCurrency(detailItem.paidAmount || (detailItem.originalAmount - detailItem.remainingAmount))}
-                </span>
-              </div>
-              <div>
-                <span className="text-slate-400 block">{language === "te" ? "మిగిలినది:" : "Remaining:"}</span>
-                <span className="font-extrabold text-amber-600 dark:text-amber-400">{formatCurrency(detailItem.remainingAmount)}</span>
-              </div>
-            </div>
-
-            {/* Settlements List */}
-            <div>
-              <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 mb-2">
-                {language === "te" ? "చెల్లింపుల చరిత్ర (Settlement Payments):" : "Payment History:"}
-              </h4>
-              {detailItem.settlements && detailItem.settlements.length > 0 ? (
-                <div className="space-y-2 max-h-56 overflow-y-auto">
-                  {detailItem.settlements.map((s: any) => (
-                    <div key={s.id} className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="font-bold text-slate-900 dark:text-white block">{formatCurrency(s.amountPaid)}</span>
-                        <span className="text-[11px] text-slate-400">{formatDate(s.paymentDate)} • {s.paymentMethod || "UPI"}</span>
-                      </div>
-                      {s.notes && <span className="text-[11px] text-slate-500 italic max-w-xs truncate">{s.notes}</span>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-slate-400 italic py-3 text-center">
-                  {language === "te" ? "ఇంతవరకు ఎలాంటి చెల్లింపులు చేయలేదు." : "No payment transactions recorded yet."}
-                </p>
-              )}
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <Button variant="outline" size="sm" onClick={() => setDetailItem(null)}>
-                {t("common.close")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Settle Debt Confirmation Modal */}
-      {selectedForSettle && (
-        <SettleDebtModal
-          isOpen={!!selectedForSettle}
-          debt={selectedForSettle}
-          onClose={() => setSelectedForSettle(null)}
-          onSuccess={() => {
-            fetchWeeklyPayments();
-            setSelectedForSettle(null);
-          }}
-        />
       )}
     </div>
   );
 }
-
