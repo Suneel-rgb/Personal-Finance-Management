@@ -19,6 +19,9 @@ export async function GET(
           },
           orderBy: { paymentDate: "desc" },
         },
+        installments: {
+          orderBy: { installmentNumber: "asc" },
+        },
       },
     });
 
@@ -74,7 +77,7 @@ export async function PUT(
     }
 
     let newStatus = status !== undefined ? status : debt.status;
-    if (newRemaining === 0 && debt.settlements.length > 0) {
+    if (newRemaining === 0 && (debt.settlements.length > 0 || (debt.paidAmount && debt.paidAmount > 0))) {
       newStatus = "SETTLED";
     } else if (newRemaining < newOriginal) {
       newStatus = "PARTIALLY_PAID";
@@ -115,6 +118,7 @@ export async function DELETE(
       include: {
         settlements: { include: { transaction: true } },
         transactions: true,
+        installments: { include: { transaction: true } },
       },
     });
 
@@ -128,13 +132,11 @@ export async function DELETE(
         if (settlement.transaction) {
           const { accountId, amount } = settlement.transaction;
           if (debt.type === "LENT") {
-            // LENT settlement was received (+) -> revert by decrementing
             await tx.account.update({
               where: { id: accountId },
               data: { currentBalance: { decrement: amount } },
             });
           } else {
-            // BORROWED settlement was paid (-) -> revert by incrementing
             await tx.account.update({
               where: { id: accountId },
               data: { currentBalance: { increment: amount } },
@@ -145,17 +147,26 @@ export async function DELETE(
         }
       }
 
-      // 2. Revert any initial transactions linked to this debt
+      // 2. Revert any installment payment transactions
+      for (const inst of debt.installments) {
+        if (inst.transaction) {
+          await tx.account.update({
+            where: { id: inst.transaction.accountId },
+            data: { currentBalance: { increment: inst.transaction.amount } },
+          });
+          await tx.transaction.delete({ where: { id: inst.transaction.id } });
+        }
+      }
+
+      // 3. Revert any initial transactions linked to this debt
       for (const t of debt.transactions) {
         if (t.type === "LEND") {
-          // LEND was outflow (-) -> revert by incrementing (+)
           await tx.account.update({
             where: { id: t.accountId },
             data: { currentBalance: { increment: t.amount } },
           });
           await tx.transaction.delete({ where: { id: t.id } });
         } else if (t.type === "BORROW") {
-          // BORROW was inflow (+) -> revert by decrementing (-)
           await tx.account.update({
             where: { id: t.accountId },
             data: { currentBalance: { decrement: t.amount } },
@@ -164,7 +175,7 @@ export async function DELETE(
         }
       }
 
-      // 3. Delete the debt
+      // 4. Delete the debt (cascades to remaining installments)
       await tx.debt.delete({ where: { id } });
     });
 
@@ -174,4 +185,3 @@ export async function DELETE(
     return NextResponse.json({ error: error.message || "Failed to delete debt" }, { status: 500 });
   }
 }
-

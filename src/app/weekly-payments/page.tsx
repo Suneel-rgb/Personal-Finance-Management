@@ -26,6 +26,8 @@ import {
   Check,
   AlertTriangle,
   History,
+  Edit3,
+  RotateCcw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -81,6 +83,16 @@ export default function WeeklyPaymentsPage() {
   const [payMethod, setPayMethod] = useState("UPI");
   const [payNotes, setPayNotes] = useState("");
   const [payingLoading, setPayingLoading] = useState(false);
+
+  // Edit Payment State (when user accidentally clicked or wants to adjust payment)
+  const [editingInstallment, setEditingInstallment] = useState<any | null>(null);
+  const [editPayAmount, setEditPayAmount] = useState("");
+  const [editAccountId, setEditAccountId] = useState("");
+  const [editPayDate, setEditPayDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [editPayMethod, setEditPayMethod] = useState("UPI");
+  const [editNotes, setEditNotes] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
+  const [revertingId, setRevertingId] = useState<string | null>(null);
 
   // Auto-calculated fields for Add Form
   const totalRepayNum = parseFloat(originalAmount) || 0;
@@ -237,6 +249,89 @@ export default function WeeklyPaymentsPage() {
       alert("Network error");
     } finally {
       setPayingLoading(false);
+    }
+  };
+
+  // Open Edit Payment Modal (when user wants to change amount, date, account, or undo mistake)
+  const handleOpenEditPayment = (inst: any) => {
+    setEditingInstallment(inst);
+    setEditPayAmount((inst.paidAmount > 0 ? inst.paidAmount : inst.amount).toString());
+    const initialAccId = inst.transaction?.accountId || accounts[0]?.id || "";
+    setEditAccountId(initialAccId);
+    setEditPayDate(
+      inst.paidDate
+        ? new Date(inst.paidDate).toISOString().split("T")[0]
+        : new Date().toISOString().split("T")[0]
+    );
+    setEditPayMethod(inst.paymentMethod || "UPI");
+    setEditNotes(inst.notes || "");
+  };
+
+  // Submit Edit Payment
+  const handleConfirmEditPayment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingInstallment) return;
+
+    setEditLoading(true);
+    try {
+      const res = await fetch("/api/debts/installments/pay", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          installmentId: editingInstallment.id,
+          newAmountPaid: parseFloat(editPayAmount),
+          newAccountId: editAccountId,
+          newPaymentDate: editPayDate,
+          newPaymentMethod: editPayMethod,
+          newNotes: editNotes,
+        }),
+      });
+
+      if (res.ok) {
+        setEditingInstallment(null);
+        fetchWeeklyData();
+        window.dispatchEvent(new Event("finance_data_changed"));
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to update payment");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error");
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // Revert / Undo Payment (Restores installment to Pending and refunds money to account)
+  const handleRevertPayment = async (inst: any) => {
+    const refund = inst.paidAmount > 0 ? inst.paidAmount : inst.amount;
+    const confirmMsg = isTe
+      ? `${inst.lenderName || "ఈ లోన్"} యొక్క వారం ${inst.installmentNumber} చెల్లింపును రద్దు చేయాలనుకుంటున్నారా?\n\nఇది మీ ఖాతాకు ₹${refund.toLocaleString("en-IN")} తిరిగి జత చేస్తుంది మరియు వాయిదాను మళ్లీ పెండింగ్‌గా మారుస్తుంది.`
+      : `Are you sure you want to revert Week ${inst.installmentNumber} payment for ${inst.lenderName || "this loan"}?\n\nThis will refund ₹${refund.toLocaleString("en-IN")} back to your account and restore the installment to Pending/Overdue.`;
+
+    if (!confirm(confirmMsg)) return;
+
+    setRevertingId(inst.id);
+    try {
+      const res = await fetch("/api/debts/installments/revert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ installmentId: inst.id }),
+      });
+
+      if (res.ok) {
+        fetchWeeklyData();
+        window.dispatchEvent(new Event("finance_data_changed"));
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to revert payment");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error");
+    } finally {
+      setRevertingId(null);
     }
   };
 
@@ -624,14 +719,38 @@ export default function WeeklyPaymentsPage() {
                           </span>
                         </div>
 
-                        {/* Direct Mark as Paid Button */}
-                        <Button
-                          onClick={() => handleOpenPay(inst)}
-                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3.5 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
-                        >
-                          <CheckCircle2 size={15} />
-                          <span>{isTe ? "చెల్లించినట్లు గుర్తించండి" : "Mark as Paid"}</span>
-                        </Button>
+                        {/* Action Buttons: Mark as Paid or Edit/Undo if already paid */}
+                        {inst.status === "PAID" || inst.status === "SETTLED" ? (
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleOpenEditPayment(inst)}
+                              className="text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 font-bold text-xs py-1.5 px-3 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Edit3 size={13} />
+                              <span>{isTe ? "సవరించు" : "Edit"}</span>
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={revertingId === inst.id}
+                              onClick={() => handleRevertPayment(inst)}
+                              className="text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 font-bold text-xs py-1.5 px-3 rounded-xl flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <RotateCcw size={13} className={revertingId === inst.id ? "animate-spin" : ""} />
+                              <span>{isTe ? "రద్దు (Undo)" : "Undo"}</span>
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            onClick={() => handleOpenPay(inst)}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2 px-3.5 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 size={15} />
+                            <span>{isTe ? "చెల్లించినట్లు గుర్తించండి" : "Mark as Paid"}</span>
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </Card>
@@ -942,7 +1061,7 @@ export default function WeeklyPaymentsPage() {
                                 </div>
 
                                 {/* Action */}
-                                {!isPaid && (
+                                {!isPaid ? (
                                   <button
                                     onClick={() => handleOpenPay(inst)}
                                     className="w-full py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs mt-1"
@@ -950,6 +1069,26 @@ export default function WeeklyPaymentsPage() {
                                     <CheckCircle2 size={12} />
                                     <span>{isTe ? "చెల్లించినట్లు గుర్తించండి" : "Mark as Paid"}</span>
                                   </button>
+                                ) : (
+                                  <div className="flex items-center gap-1.5 mt-1 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                    <button
+                                      onClick={() => handleOpenEditPayment(inst)}
+                                      title={isTe ? "చెల్లింపును సవరించండి" : "Edit Payment"}
+                                      className="flex-1 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold text-[10px] transition-colors flex items-center justify-center gap-1 cursor-pointer border border-amber-200 dark:border-amber-800"
+                                    >
+                                      <Edit3 size={11} />
+                                      <span>{isTe ? "సవరించు" : "Edit"}</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleRevertPayment(inst)}
+                                      disabled={revertingId === inst.id}
+                                      title={isTe ? "చెల్లింపును రద్దు చేయండి (ఖాతాకు రీఫండ్)" : "Revert / Undo Payment"}
+                                      className="flex-1 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-[10px] transition-colors flex items-center justify-center gap-1 cursor-pointer border border-rose-200 dark:border-rose-800"
+                                    >
+                                      <RotateCcw size={11} className={revertingId === inst.id ? "animate-spin" : ""} />
+                                      <span>{isTe ? "రద్దు" : "Undo"}</span>
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             );
@@ -1018,6 +1157,7 @@ export default function WeeklyPaymentsPage() {
                       <th className="py-3 px-4">{isTe ? "గడువు / మిస్సయిన తేదీ" : "Scheduled / Missed Date"}</th>
                       <th className="py-3 px-4">{isTe ? "వాస్తవంగా చెల్లించిన తేదీ" : "Actual Paid Date"}</th>
                       <th className="py-3 px-4 text-center">{isTe ? "స్థితి & ఆలస్యం" : "Timing Status"}</th>
+                      <th className="py-3 px-4 text-center">{isTe ? "చర్యలు (మార్పు/రద్దు)" : "Actions"}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1054,6 +1194,27 @@ export default function WeeklyPaymentsPage() {
                                 {isTe ? "సమయానికి చెల్లించారు" : "Paid On Time"}
                               </span>
                             )}
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => handleOpenEditPayment(inst)}
+                                title={isTe ? "చెల్లింపును సవరించండి" : "Edit Payment"}
+                                className="px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold text-[11px] transition-colors flex items-center gap-1 cursor-pointer border border-amber-200 dark:border-amber-800"
+                              >
+                                <Edit3 size={12} />
+                                <span>{isTe ? "సవరించు" : "Edit"}</span>
+                              </button>
+                              <button
+                                onClick={() => handleRevertPayment(inst)}
+                                disabled={revertingId === inst.id}
+                                title={isTe ? "చెల్లింపును రద్దు చేయండి (ఖాతాకు రీఫండ్)" : "Revert / Undo Payment"}
+                                className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 font-bold text-[11px] transition-colors flex items-center gap-1 cursor-pointer border border-rose-200 dark:border-rose-800"
+                              >
+                                <RotateCcw size={12} className={revertingId === inst.id ? "animate-spin" : ""} />
+                                <span>{isTe ? "రద్దు" : "Undo"}</span>
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1441,6 +1602,169 @@ export default function WeeklyPaymentsPage() {
                     ? isTe ? "చెల్లింపు నమోదు అవుతోంది..." : "Recording..."
                     : isTe ? "చెల్లించినట్లు నిర్ధారించండి" : "Confirm Payment"}
                 </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 9. MODAL: EDIT / UPDATE PAYMENT (When user accidentally marked as paid or wants to change amount/date/account) */}
+      {editingInstallment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-800 p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400">
+                  <Edit3 size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {isTe ? "చెల్లింపు వివరాలను సవరించండి" : "Update / Edit Payment"}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {editingInstallment.lenderName || "Weekly Payment"} • Week {editingInstallment.installmentNumber} of {editingInstallment.totalInstallments}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingInstallment(null)}
+                className="text-slate-400 hover:text-slate-600 text-lg cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Notice banner */}
+            <div className="p-3 rounded-2xl border text-xs bg-amber-50/70 dark:bg-amber-950/40 border-amber-200 dark:border-amber-900 text-amber-900 dark:text-amber-200 space-y-1">
+              <div className="flex items-center justify-between font-bold">
+                <span>{isTe ? "షెడ్యూల్ తేదీ:" : "Scheduled Due Date:"}</span>
+                <span className="font-black underline">{formatDate(editingInstallment.dueDate)}</span>
+              </div>
+              <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                {isTe
+                  ? "మీరు మొత్తం లేదా ఖాతాను మార్చితే, ఖాతా బ్యాలెన్స్ మరియు మిగిలిన అప్పు స్వయంచాలకంగా అప్‌డేట్ చేయబడతాయి."
+                  : "Updating amount or account will automatically adjust account balance and recalculate remaining debt balance everywhere."}
+              </p>
+            </div>
+
+            <form onSubmit={handleConfirmEditPayment} className="space-y-3.5 text-xs">
+              {/* Amount to pay */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {isTe ? "చెల్లించిన మొత్తం (₹) *" : "Paid Amount (₹) *"}
+                </label>
+                <input
+                  type="number"
+                  step="any"
+                  required
+                  value={editPayAmount}
+                  onChange={(e) => setEditPayAmount(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-black text-sm"
+                />
+              </div>
+
+              {/* Deduct from Account */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {isTe ? "చెల్లించిన ఖాతా *" : "Paid from Account *"}
+                </label>
+                <select
+                  required
+                  value={editAccountId}
+                  onChange={(e) => setEditAccountId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  {accounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name} ({formatCurrency(acc.currentBalance)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Actual Paid Date & Payment Method */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isTe ? "వాస్తవంగా చెల్లించిన తేదీ *" : "Actual Paid Date *"}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={editPayDate}
+                    onChange={(e) => setEditPayDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isTe ? "చెల్లింపు విధానం" : "Payment Method"}
+                  </label>
+                  <select
+                    value={editPayMethod}
+                    onChange={(e) => setEditPayMethod(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                  >
+                    <option value="UPI">UPI / PhonePe / GPay</option>
+                    <option value="CASH">Cash in Hand</option>
+                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  {isTe ? "గమనికలు" : "Notes (Optional)"}
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Corrected installment amount"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800"
+                />
+              </div>
+
+              {/* Buttons */}
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={editLoading}
+                  onClick={() => {
+                    const inst = editingInstallment;
+                    setEditingInstallment(null);
+                    handleRevertPayment(inst);
+                  }}
+                  className="text-rose-600 hover:text-rose-700 border-rose-200 hover:bg-rose-50 text-xs font-bold"
+                >
+                  <RotateCcw size={13} className="mr-1" />
+                  {isTe ? "పూర్తిగా రద్దు చేయి (Undo)" : "Revert to Unpaid"}
+                </Button>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditingInstallment(null)}
+                  >
+                    {isTe ? "రద్దు" : "Cancel"}
+                  </Button>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={editLoading}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                  >
+                    {editLoading
+                      ? isTe ? "సేవ్ అవుతోంది..." : "Saving..."
+                      : isTe ? "మార్పులను భద్రపరచండి" : "Save Changes"}
+                  </Button>
+                </div>
               </div>
             </form>
           </div>

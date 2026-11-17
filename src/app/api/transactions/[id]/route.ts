@@ -18,6 +18,7 @@ export async function GET(
           include: { party: true },
         },
         debtSettlement: true,
+        installment: true,
       },
     });
 
@@ -41,7 +42,10 @@ export async function PUT(
     const body = await request.json();
     const { accountId, categoryId, amount, transactionDate, notes, paymentMethod } = body;
 
-    const oldTx = await prisma.transaction.findUnique({ where: { id } });
+    const oldTx = await prisma.transaction.findUnique({
+      where: { id },
+      include: { installment: true },
+    });
     if (!oldTx) {
       return NextResponse.json({ error: "Transaction not found" }, { status: 404 });
     }
@@ -56,17 +60,15 @@ export async function PUT(
     const updated = await prisma.$transaction(async (tx) => {
       // If amount or account changed, adjust balances
       if (newAmount !== oldTx.amount || targetAccountId !== oldTx.accountId) {
-        let isOutflow = oldTx.type === "EXPENSE" || oldTx.type === "LEND";
-        let isInflow = oldTx.type === "INCOME" || oldTx.type === "BORROW";
+        let isOutflow = oldTx.type === "EXPENSE" || oldTx.type === "LEND" || oldTx.type === "PAYABLE_PAID";
+        let isInflow = oldTx.type === "INCOME" || oldTx.type === "BORROW" || oldTx.type === "RECEIVABLE_RECEIVED";
 
         if (oldTx.type === "SETTLEMENT" && oldTx.debtId) {
           const debt = await tx.debt.findUnique({ where: { id: oldTx.debtId } });
           if (debt) {
-            // LENT settlement = inflow (+ to account); BORROWED settlement = repayment outflow (- from account)
             isInflow = debt.type === "LENT";
             isOutflow = debt.type === "BORROWED";
 
-            // If amount changed on a settlement transaction, update debt remaining balance and settlement
             if (newAmount !== oldTx.amount) {
               const delta = newAmount - oldTx.amount;
               const newRemaining = debt.remainingAmount - delta;
@@ -77,6 +79,7 @@ export async function PUT(
                 where: { id: debt.id },
                 data: {
                   remainingAmount: newRemaining,
+                  paidAmount: Math.max(0, debt.paidAmount + delta),
                   status: newRemaining === 0 ? "SETTLED" : "PARTIALLY_PAID",
                 },
               });
@@ -85,6 +88,36 @@ export async function PUT(
                 data: { amountPaid: newAmount },
               });
             }
+          }
+        }
+
+        // Linked Weekly Installment sync
+        const linkedInst = oldTx.installment || (await tx.installment.findFirst({ where: { transactionId: id } }));
+        if (linkedInst) {
+          const delta = newAmount - oldTx.amount;
+          const isFullPaid = newAmount >= linkedInst.amount;
+          await tx.installment.update({
+            where: { id: linkedInst.id },
+            data: {
+              paidAmount: newAmount,
+              status: isFullPaid ? "PAID" : "PARTIALLY_PAID",
+              paymentMethod: paymentMethod !== undefined ? paymentMethod : linkedInst.paymentMethod,
+            },
+          });
+
+          // Adjust parent debt
+          const parentDebt = await tx.debt.findUnique({ where: { id: linkedInst.debtId } });
+          if (parentDebt) {
+            const newDebtPaid = Math.max(0, parentDebt.paidAmount + delta);
+            const newDebtRem = Math.max(0, parentDebt.remainingAmount - delta);
+            await tx.debt.update({
+              where: { id: parentDebt.id },
+              data: {
+                paidAmount: newDebtPaid,
+                remainingAmount: newDebtRem,
+                status: newDebtRem === 0 ? "SETTLED" : "PARTIALLY_PAID",
+              },
+            });
           }
         }
 
@@ -155,6 +188,7 @@ export async function DELETE(
     const { id } = await params;
     const transaction = await prisma.transaction.findUnique({
       where: { id },
+      include: { installment: true },
     });
 
     if (!transaction) {
@@ -165,12 +199,12 @@ export async function DELETE(
       // Revert account balance impact
       const { type, amount, accountId, toAccountId, debtId } = transaction;
 
-      if (type === "INCOME" || type === "BORROW") {
+      if (type === "INCOME" || type === "BORROW" || type === "RECEIVABLE_RECEIVED") {
         await tx.account.update({
           where: { id: accountId },
           data: { currentBalance: { decrement: amount } },
         });
-      } else if (type === "EXPENSE" || type === "LEND") {
+      } else if (type === "EXPENSE" || type === "LEND" || type === "PAYABLE_PAID") {
         await tx.account.update({
           where: { id: accountId },
           data: { currentBalance: { increment: amount } },
@@ -189,13 +223,11 @@ export async function DELETE(
         const debt = await tx.debt.findUnique({ where: { id: debtId } });
         if (debt) {
           if (debt.type === "LENT") {
-            // Revert inflow
             await tx.account.update({
               where: { id: accountId },
               data: { currentBalance: { decrement: amount } },
             });
           } else {
-            // Revert outflow
             await tx.account.update({
               where: { id: accountId },
               data: { currentBalance: { increment: amount } },
@@ -207,7 +239,38 @@ export async function DELETE(
             where: { id: debtId },
             data: {
               remainingAmount: newRemaining,
+              paidAmount: Math.max(0, debt.paidAmount - amount),
               status: newRemaining >= debt.originalAmount ? "PENDING" : "PARTIALLY_PAID",
+            },
+          });
+        }
+      }
+
+      // Check if linked to an Installment
+      const linkedInst = transaction.installment || (await tx.installment.findFirst({ where: { transactionId: id } }));
+      if (linkedInst) {
+        const isPast = new Date(linkedInst.dueDate) < new Date();
+        await tx.installment.update({
+          where: { id: linkedInst.id },
+          data: {
+            status: isPast ? "OVERDUE" : "PENDING",
+            paidAmount: 0.0,
+            paidDate: null,
+            transactionId: null,
+          },
+        });
+
+        // Restore parent debt balance
+        const pDebt = await tx.debt.findUnique({ where: { id: linkedInst.debtId } });
+        if (pDebt) {
+          const newPaid = Math.max(0, pDebt.paidAmount - amount);
+          const newRem = Math.min(pDebt.originalAmount, pDebt.remainingAmount + amount);
+          await tx.debt.update({
+            where: { id: pDebt.id },
+            data: {
+              paidAmount: newPaid,
+              remainingAmount: newRem,
+              status: newPaid > 0 ? "PARTIALLY_PAID" : "PENDING",
             },
           });
         }
@@ -222,6 +285,10 @@ export async function DELETE(
         await tx.debt.delete({ where: { id: debtId } });
       }
 
+      // Delete linked settlement if any
+      await tx.debtSettlement.deleteMany({ where: { transactionId: id } });
+
+      // Delete the transaction
       await tx.transaction.delete({ where: { id } });
     });
 
