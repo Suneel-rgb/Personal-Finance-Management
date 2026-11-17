@@ -46,11 +46,6 @@ export async function POST(request: Request) {
         throw new Error("ACCOUNT_NOT_FOUND");
       }
 
-      // If paying back borrowed money, ensure account has sufficient funds
-      if (debt.type === "BORROWED" && account.type !== "CREDIT_CARD" && account.currentBalance < numAmount) {
-        throw new Error(`INSUFFICIENT_FUNDS:Insufficient balance in ${account.name}. Available: ₹${account.currentBalance}`);
-      }
-
       const newRemaining = Math.max(0, debt.remainingAmount - numAmount);
       const newStatus = newRemaining === 0 ? "SETTLED" : "PARTIALLY_PAID";
       const newPaid = Math.max(0, debt.originalAmount - newRemaining);

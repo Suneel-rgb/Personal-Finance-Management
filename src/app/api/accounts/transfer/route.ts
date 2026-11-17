@@ -31,10 +31,6 @@ export async function POST(request: Request) {
         throw new Error("ACCOUNTS_NOT_FOUND");
       }
 
-      if (fromAccount.type !== "CREDIT_CARD" && fromAccount.currentBalance < numAmount) {
-        throw new Error(`INSUFFICIENT_FUNDS:Insufficient balance in ${fromAccount.name}. Available: ₹${fromAccount.currentBalance}`);
-      }
-
       // 1. Create Transfer Transaction
       const transferTx = await tx.transaction.create({
         data: {

@@ -32,10 +32,6 @@ export async function POST(request: Request) {
         throw new Error("ACCOUNT_NOT_FOUND");
       }
 
-      if (account.type !== "CREDIT_CARD" && account.currentBalance < numAmount) {
-        throw new Error(`INSUFFICIENT_FUNDS:Insufficient balance in ${account.name}. Available: ₹${account.currentBalance}`);
-      }
-
       // 1. Create Savings Contribution
       const contribution = await tx.savingsContribution.create({
         data: {
