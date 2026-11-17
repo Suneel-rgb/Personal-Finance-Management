@@ -24,6 +24,9 @@ model User {
   debts             Debt[]
   budgets           Budget[]
   savingsGoals      SavingsGoal[]
+  autoRides         AutoRide[]
+  autoExpenses      AutoExpense[]
+  autoDailyLogs     AutoDailyLog[]
 }
 
 model Account {
@@ -236,5 +239,70 @@ model SavingsContribution {
 
   @@index([goalId])
   @@index([accountId])
+}
+
+// -------------------------------------------------------------
+// Auto Rickshaw / Taxi / Transport Rides & Operations Management
+// -------------------------------------------------------------
+
+model AutoRide {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rideDate        DateTime @default(now())
+  rideType        String   @default("LOCAL") // "LOCAL", "HIRE", "SHARING", "OUTSTATION", "METER"
+  pickupLocation  String?
+  dropLocation    String?
+  fareAmount      Float
+  paymentMethod   String   @default("CASH") // "CASH", "UPI"
+  passengerCount  Int?     @default(1)
+  distanceKm      Float?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, rideDate])
+}
+
+model AutoExpense {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expenseDate     DateTime @default(now())
+  category        String   // "CNG_GAS", "PETROL_DIESEL", "MAINTENANCE", "OIL_GREASE", "TYRE_PUNCTURE", "AUTO_WASH", "STAND_UNION_FEE", "CHALLAN_FINE", "AUTO_EMI", "INSURANCE_PERMIT", "OTHER"
+  title           String   // e.g. "Morning CNG Gas", "2T Oil & Grease"
+  amount          Float
+  fuelLitersOrKg  Float?   // Gas / Fuel quantity (e.g. 3.5 kg CNG)
+  meterReadingKm  Float?   // Odometer reading at time of filling / repair
+  paymentMethod   String   @default("CASH") // "CASH", "UPI", "BANK_TRANSFER"
+  accountId       String?  // Optional account
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId, expenseDate])
+  @@index([category])
+}
+
+model AutoDailyLog {
+  id                 String   @id @default(uuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date               DateTime // Date of the day log
+  startMeterKm       Float?   // Morning starting odometer reading
+  endMeterKm         Float?   // Night ending odometer reading
+  totalKm            Float?   // Automatically calculated: end - start
+  totalRidesCount    Int      @default(0)
+  totalEarnings      Float    @default(0.0) // Total rides money
+  cashEarnings       Float    @default(0.0) // Total cash
+  upiEarnings        Float    @default(0.0) // Total UPI
+  totalFuelCost      Float    @default(0.0) // CNG / petrol expenses
+  totalOtherExpenses Float    @default(0.0) // Maintenance, stand fee, etc.
+  netProfit          Float    @default(0.0) // totalEarnings - (fuel + other)
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([userId, date])
 }
 

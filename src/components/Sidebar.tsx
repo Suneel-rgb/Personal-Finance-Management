@@ -21,6 +21,7 @@ import {
   X,
   Wallet,
   ArrowLeftRight,
+  Car,
 } from "lucide-react";
 import { sampleUserProfile } from "@/lib/sampleData";
 
@@ -49,6 +50,12 @@ export function Sidebar() {
         { href: "/", label: t("nav.dashboard"), icon: LayoutDashboard },
         { href: "/expenses", label: t("nav.dailyExpenses"), icon: TrendingDown },
         { href: "/received-money", label: t("nav.receivedMoney"), icon: Download },
+      ],
+    },
+    {
+      title: language === "te" ? "ఆటో వ్యాపారం & డ్రైవింగ్" : "Auto Rickshaw Business",
+      items: [
+        { href: "/auto-rides", label: language === "te" ? "ఆటో రైడ్స్ & ఖర్చులు" : "Auto Rides & Expenses", icon: Car, badge: "New" },
       ],
     },
     {
